@@ -1,8 +1,8 @@
 struct ClaudeTemplate: AgentTemplate, Sendable {
     let name = "claude"
-    let defaultImage = "docker.io/ubuntu:24.04"
+    let defaultImage = "container-sandbox-claude:latest"
 
-    let entrypoint = ["/usr/local/bin/claude", "--dangerously-skip-permissions"]
+    let entrypoint = ["claude", "--dangerously-skip-permissions"]
 
     let defaultEnvironment: [String: String] = [
         "TERM": "xterm-256color",
@@ -23,6 +23,63 @@ struct ClaudeTemplate: AgentTemplate, Sendable {
     ]
 
     let requiresSSH = true
-    let requiresVirtualization = true
+    let requiresVirtualization = false
     let useInit = true
+
+    let containerfileContent: String? = ##"""
+    FROM docker.io/ubuntu:24.04
+
+    ENV DEBIAN_FRONTEND=noninteractive
+
+    # Base system packages and build tools
+    RUN apt-get update && apt-get install -y \
+        build-essential \
+        ca-certificates \
+        curl \
+        git \
+        gnupg \
+        jq \
+        less \
+        locales \
+        openssh-client \
+        sudo \
+        vim \
+        wget \
+        zsh \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Locale
+    RUN locale-gen en_US.UTF-8
+    ENV LANG=en_US.UTF-8
+    ENV LC_ALL=en_US.UTF-8
+
+    # Node.js 22 LTS (needed as a runtime for Claude Code)
+    RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
+        && apt-get install -y nodejs \
+        && rm -rf /var/lib/apt/lists/*
+
+    # Podman (for nested container support, configured for cgroupfs — no systemd needed)
+    RUN apt-get update && apt-get install -y --no-install-recommends \
+        podman \
+        fuse-overlayfs \
+        slirp4netns \
+        uidmap \
+        && rm -rf /var/lib/apt/lists/*
+    RUN mkdir -p /etc/containers && printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n' > /etc/containers/containers.conf
+
+    # Non-root sandbox user with passwordless sudo
+    RUN useradd -m -s /bin/bash -G sudo sandbox \
+        && echo "sandbox ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/sandbox
+
+    # Git defaults
+    RUN git config --system init.defaultBranch main \
+        && git config --system safe.directory '*'
+
+    USER sandbox
+
+    # Claude Code (installed as sandbox user via official installer)
+    RUN curl -fsSL https://claude.ai/install.sh | bash
+
+    WORKDIR /home/sandbox
+    """##
 }

@@ -6,12 +6,18 @@ import Foundation
 protocol AgentTemplate: Sendable {
     var name: String { get }
     var defaultImage: String { get }
+    /// Embedded Containerfile content for building the image. Nil means use the image as-is.
+    var containerfileContent: String? { get }
     var entrypoint: [String] { get }
     var defaultEnvironment: [String: String] { get }
     var passthroughEnvironment: [String] { get }
     var requiresSSH: Bool { get }
     var requiresVirtualization: Bool { get }
     var useInit: Bool { get }
+}
+
+extension AgentTemplate {
+    var containerfileContent: String? { nil }
 }
 
 extension AgentTemplate {

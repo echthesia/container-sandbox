@@ -34,7 +34,7 @@ struct RunCommand: AsyncParsableCommand {
     @Argument(help: "Workspace directory (default: current directory)")
     var workspace: String = "."
 
-    @Argument(parsing: .captureForPassthrough, help: "Extra workspaces or agent arguments (use -- to pass args to agent)")
+    @Argument(parsing: .captureForPassthrough, help: "Extra workspaces (append :ro for read-only) and agent arguments (after --)")
     var extra: [String] = []
 
     @Option(name: [.short, .long], help: "Override sandbox name")
@@ -44,6 +44,20 @@ struct RunCommand: AsyncParsableCommand {
     var env: [String] = []
 
     func run() async throws {
+        // Split extra into workspace paths and agent args (separated by --)
+        var extraWorkspaces: [String] = []
+        var agentArgs: [String] = []
+        var seenSeparator = false
+        for arg in extra {
+            if arg == "--" {
+                seenSeparator = true
+            } else if seenSeparator {
+                agentArgs.append(arg)
+            } else {
+                extraWorkspaces.append(arg)
+            }
+        }
+
         let manager = SandboxManager()
 
         // Resolve agent template, or treat as existing sandbox name
@@ -84,7 +98,8 @@ struct RunCommand: AsyncParsableCommand {
         // Ensure sandbox exists
         let sandboxName = try await manager.ensureSandboxExists(
             template: template,
-            workspace: workspace
+            workspace: workspace,
+            extraWorkspaces: extraWorkspaces
         )
 
         // Bootstrap if needed
@@ -99,7 +114,7 @@ struct RunCommand: AsyncParsableCommand {
         let processConfig = template.processConfiguration(
             baseConfig: snapshot.configuration.initProcess,
             workingDirectory: resolvedWorkspace,
-            extraArgs: extra,
+            extraArgs: agentArgs,
             extraEnv: extraEnv
         )
 
@@ -157,12 +172,10 @@ struct ExecCommand: AsyncParsableCommand {
     var tty: Bool = false
 
     func run() async throws {
-        FileHandle.standardError.write(Data("[exec] start, command=\(command)\n".utf8))
         guard let executable = command.first else {
             throw ValidationError("No command specified.")
         }
 
-        FileHandle.standardError.write(Data("[exec] getSandbox\n".utf8))
         let manager = SandboxManager()
         guard let snapshot = try await manager.getSandbox(name: sandboxName) else {
             throw SandboxError.sandboxNotFound(sandboxName)

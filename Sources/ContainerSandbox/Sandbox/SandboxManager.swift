@@ -28,13 +28,61 @@ struct SandboxManager: Sendable {
         return sandboxes.first { $0.id == name }
     }
 
+    // MARK: - Image Management
+
+    /// Check if an image exists locally, and if not, build it from the template's
+    /// embedded Containerfile (if any). Falls back to pulling for templates without
+    /// a Containerfile.
+    func buildImageIfNeeded(template: any AgentTemplate, force: Bool = false) async throws {
+        // Check if image already exists (skip if force rebuild)
+        if !force, let _ = try? await ClientImage.get(reference: template.defaultImage) {
+            return
+        }
+
+        guard let containerfileContent = template.containerfileContent else {
+            // No Containerfile — image will be pulled during fetch
+            return
+        }
+
+        // Write Containerfile to a temp directory and shell out to `container build`
+        let tmpDir = FileManager.default.temporaryDirectory
+            .appendingPathComponent("container-sandbox-build-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(at: tmpDir) }
+
+        let containerfilePath = tmpDir.appendingPathComponent("Containerfile")
+        try containerfileContent.write(to: containerfilePath, atomically: true, encoding: .utf8)
+
+        print("Building image \(template.defaultImage)...")
+
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+        process.arguments = [
+            "container", "build",
+            "--tag", template.defaultImage,
+            "--file", containerfilePath.path,
+            "--progress", "plain",
+            tmpDir.path,
+        ]
+        process.standardOutput = FileHandle.standardOutput
+        process.standardError = FileHandle.standardError
+
+        try process.run()
+        process.waitUntilExit()
+
+        guard process.terminationStatus == 0 else {
+            throw SandboxError.imageBuildFailed("container build exited with status \(process.terminationStatus)")
+        }
+    }
+
     // MARK: - Creation
 
     /// Ensure a sandbox exists for the given agent + workspace. Creates if missing.
     /// Reads the OCI image config for user, env, entrypoint — matching native CLI behavior.
     func ensureSandboxExists(
         template: any AgentTemplate,
-        workspace: String
+        workspace: String,
+        extraWorkspaces: [String] = []
     ) async throws -> String {
         let resolvedWorkspace = URL(fileURLWithPath: workspace, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path
 
@@ -50,7 +98,9 @@ struct SandboxManager: Sendable {
 
         let platform: ContainerizationOCI.Platform = .current
 
-        // Fetch and unpack the image
+        // Build or fetch the image
+        try await buildImageIfNeeded(template: template)
+
         let img = try await ClientImage.fetch(reference: template.defaultImage, platform: platform)
         try await img.getCreateSnapshot(platform: platform)
 
@@ -94,6 +144,18 @@ struct SandboxManager: Sendable {
             .virtiofs(source: resolvedWorkspace, destination: resolvedWorkspace, options: [])
         )
 
+        // Mount extra workspaces (append :ro for read-only)
+        for extra in extraWorkspaces {
+            let (path, readOnly) = Self.parseWorkspacePath(extra)
+            let resolved = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path
+            guard FileManager.default.fileExists(atPath: resolved) else {
+                throw SandboxError.workspaceNotFound(resolved)
+            }
+            config.mounts.append(
+                .virtiofs(source: resolved, destination: resolved, options: readOnly ? ["ro"] : [])
+            )
+        }
+
         // Labels
         config.labels = [
             "sandbox.managed": "true",
@@ -108,7 +170,7 @@ struct SandboxManager: Sendable {
 
         // Resources
         config.resources.cpus = ProcessInfo.processInfo.processorCount
-        config.resources.memoryInBytes = 4 * 1024 * 1024 * 1024 // 4 GiB
+        config.resources.memoryInBytes = 8 * 1024 * 1024 * 1024 // 8 GiB
 
         try await client.create(configuration: config, options: .default, kernel: kernel, initImage: initImageRef)
 
@@ -149,15 +211,7 @@ struct SandboxManager: Sendable {
             stdio: io.stdio
         )
 
-        if interactive {
-            return try await io.handleProcess(process: process, log: log)
-        }
-
-        try await process.start()
-        try io.closeAfterStart()
-        let exitCode = try await process.wait()
-        try await io.wait()
-        return exitCode
+        return try await io.handleProcess(process: process, log: log)
     }
 
     /// Stop a sandbox.
@@ -177,5 +231,13 @@ struct SandboxManager: Sendable {
     /// Export a sandbox to an archive.
     func exportSandbox(name: String, to path: String) async throws {
         try await client.export(id: name, archive: URL(fileURLWithPath: path))
+    }
+
+    /// Parse a workspace path, stripping `:ro` suffix if present.
+    static func parseWorkspacePath(_ input: String) -> (path: String, readOnly: Bool) {
+        if input.hasSuffix(":ro") {
+            return (String(input.dropLast(3)), true)
+        }
+        return (input, false)
     }
 }
