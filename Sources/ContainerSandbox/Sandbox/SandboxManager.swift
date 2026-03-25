@@ -68,11 +68,19 @@ struct SandboxManager: Sendable {
         process.standardOutput = FileHandle.standardOutput
         process.standardError = FileHandle.standardError
 
-        try process.run()
-        process.waitUntilExit()
+        let status = try await withCheckedThrowingContinuation { (continuation: CheckedContinuation<Int32, any Error>) in
+            process.terminationHandler = { p in
+                continuation.resume(returning: p.terminationStatus)
+            }
+            do {
+                try process.run()
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
 
-        guard process.terminationStatus == 0 else {
-            throw SandboxError.imageBuildFailed("container build exited with status \(process.terminationStatus)")
+        guard status == 0 else {
+            throw SandboxError.imageBuildFailed("container build exited with status \(status)")
         }
     }
 
