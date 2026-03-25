@@ -94,7 +94,17 @@ struct RunCommand: AsyncParsableCommand {
                 terminal: true,
                 user: initConfig.user
             )
-            let exitCode = try await manager.runProcess(name: agent, configuration: config)
+            let sessionId = try SessionTracker.create(for: agent)
+            let exitCode: Int32
+            do {
+                exitCode = try await manager.runProcess(name: agent, configuration: config)
+            } catch {
+                let wasLast = SessionTracker.remove(sessionId: sessionId, for: agent)
+                if wasLast { try? await manager.stopSandbox(name: agent) }
+                throw error
+            }
+            let wasLast = SessionTracker.remove(sessionId: sessionId, for: agent)
+            if wasLast { try? await manager.stopSandbox(name: agent) }
             throw ExitCode(exitCode)
         }
 
@@ -136,8 +146,20 @@ struct RunCommand: AsyncParsableCommand {
             extraEnv: extraEnv
         )
 
-        // Run the agent process
-        let exitCode = try await manager.runProcess(name: sandboxName, configuration: processConfig)
+        // Track session and auto-stop when last session exits
+        let sessionId = try SessionTracker.create(for: sandboxName)
+        let exitCode: Int32
+        do {
+            exitCode = try await manager.runProcess(name: sandboxName, configuration: processConfig)
+        } catch {
+            let wasLast = SessionTracker.remove(sessionId: sessionId, for: sandboxName)
+            if wasLast { try? await manager.stopSandbox(name: sandboxName) }
+            throw error
+        }
+        let wasLast = SessionTracker.remove(sessionId: sessionId, for: sandboxName)
+        if wasLast {
+            try? await manager.stopSandbox(name: sandboxName)
+        }
         throw ExitCode(exitCode)
     }
 }
@@ -218,7 +240,18 @@ struct ExecCommand: AsyncParsableCommand {
             user: initConfig.user
         )
 
-        let exitCode = try await manager.runProcess(name: sandboxName, configuration: config)
+        // Track session and auto-stop when last session exits
+        let sessionId = try SessionTracker.create(for: sandboxName)
+        let exitCode: Int32
+        do {
+            exitCode = try await manager.runProcess(name: sandboxName, configuration: config)
+        } catch {
+            let wasLast = SessionTracker.remove(sessionId: sessionId, for: sandboxName)
+            if wasLast { try? await manager.stopSandbox(name: sandboxName) }
+            throw error
+        }
+        let wasLast = SessionTracker.remove(sessionId: sessionId, for: sandboxName)
+        if wasLast { try? await manager.stopSandbox(name: sandboxName) }
         throw ExitCode(exitCode)
     }
 }

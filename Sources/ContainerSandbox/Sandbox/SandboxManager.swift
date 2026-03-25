@@ -227,13 +227,15 @@ struct SandboxManager: Sendable {
         return try await io.handleProcess(process: process, log: log)
     }
 
-    /// Stop a sandbox.
+    /// Stop a sandbox and clear all session tracking.
     func stopSandbox(name: String) async throws {
+        SessionTracker.clearAll(for: name)
         try await client.stop(id: name)
     }
 
     /// Delete a sandbox (stops first if running).
     func deleteSandbox(name: String) async throws {
+        SessionTracker.clearAll(for: name)
         let snapshot = try await client.get(id: name)
         if snapshot.status == .running {
             try await client.stop(id: name)
