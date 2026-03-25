@@ -20,6 +20,24 @@ struct SandboxCommand: AsyncParsableCommand {
         defaultSubcommand: RunCommand.self
     )
 
+    // handleProcess uses a task group with a signal-handler task that doesn't
+    // respond to cancellation. When errors occur, the group hangs waiting for it.
+    // Force-exit on errors to match the native CLI's behavior.
+    static func main() async {
+        do {
+            var command = try parseAsRoot()
+            if var asyncCommand = command as? AsyncParsableCommand {
+                try await asyncCommand.run()
+            } else {
+                try command.run()
+            }
+        } catch {
+            if let exitError = error as? ExitCode {
+                Darwin.exit(exitError.rawValue)
+            }
+            Self.exit(withError: error)
+        }
+    }
 }
 
 struct RunCommand: AsyncParsableCommand {

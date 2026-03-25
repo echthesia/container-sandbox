@@ -33,9 +33,9 @@ struct SandboxManager: Sendable {
     /// Check if an image exists locally, and if not, build it from the template's
     /// embedded Containerfile (if any). Falls back to pulling for templates without
     /// a Containerfile.
-    func buildImageIfNeeded(template: any AgentTemplate, force: Bool = false) async throws {
-        // Check if image already exists (skip if force rebuild)
-        if !force, let _ = try? await ClientImage.get(reference: template.defaultImage) {
+    func buildImageIfNeeded(template: any AgentTemplate) async throws {
+        // Check if image already exists
+        if let _ = try? await ClientImage.get(reference: template.defaultImage) {
             return
         }
 
@@ -62,6 +62,7 @@ struct SandboxManager: Sendable {
             "--tag", template.defaultImage,
             "--file", containerfilePath.path,
             "--progress", "plain",
+            "--memory", "8G",
             tmpDir.path,
         ]
         process.standardOutput = FileHandle.standardOutput
@@ -154,6 +155,18 @@ struct SandboxManager: Sendable {
             config.mounts.append(
                 .virtiofs(source: resolved, destination: resolved, options: readOnly ? ["ro"] : [])
             )
+        }
+
+        // DNS
+        config.dns = .init()
+
+        // Network — attach to the builtin network
+        if let builtinNetwork = try await ClientNetwork.builtin {
+            let attachment = AttachmentConfiguration(
+                network: builtinNetwork.id,
+                options: AttachmentOptions(hostname: name)
+            )
+            config.networks = [attachment]
         }
 
         // Labels

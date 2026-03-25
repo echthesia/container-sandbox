@@ -2,7 +2,7 @@ struct ClaudeTemplate: AgentTemplate, Sendable {
     let name = "claude"
     let defaultImage = "container-sandbox-claude:latest"
 
-    let entrypoint = ["claude", "--dangerously-skip-permissions"]
+    let entrypoint = ["/home/sandbox/.local/bin/claude", "--dangerously-skip-permissions"]
 
     let defaultEnvironment: [String: String] = [
         "TERM": "xterm-256color",
@@ -76,10 +76,13 @@ struct ClaudeTemplate: AgentTemplate, Sendable {
         && git config --system safe.directory '*'
 
     USER sandbox
+    WORKDIR /home/sandbox
+    ENV PATH="/home/sandbox/.local/bin:$PATH"
 
     # Claude Code (installed as sandbox user via official installer)
     RUN curl -fsSL https://claude.ai/install.sh | bash
 
-    WORKDIR /home/sandbox
+    # uv (Python package manager)
+    RUN curl -LsSf https://astral.sh/uv/install.sh | bash
     """##
 }
