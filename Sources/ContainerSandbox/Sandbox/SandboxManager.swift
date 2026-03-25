@@ -6,6 +6,13 @@ import Logging
 
 private let log = Logger(label: "container-sandbox")
 
+/// Label keys used to tag sandbox containers.
+enum SandboxLabels {
+    static let managed = "sandbox.managed"
+    static let agent = "sandbox.agent"
+    static let workspace = "sandbox.workspace"
+}
+
 /// Manages sandbox lifecycle using the ContainerClient API.
 struct SandboxManager: Sendable {
     let client: ContainerClient
@@ -16,35 +23,28 @@ struct SandboxManager: Sendable {
 
     // MARK: - Listing
 
-    /// List all sandbox containers (filtered by naming convention).
     func listSandboxes() async throws -> [ContainerSnapshot] {
         let all = try await client.list()
         return all.filter { SandboxNaming.isSandboxName($0.id) }
     }
 
-    /// Get a specific sandbox by name, or nil if it doesn't exist.
+    /// Get a specific sandbox by ID. Returns nil if not found.
     func getSandbox(name: String) async throws -> ContainerSnapshot? {
-        let sandboxes = try await listSandboxes()
-        return sandboxes.first { $0.id == name }
+        // Use direct get instead of listing all containers
+        return try? await client.get(id: name)
     }
 
     // MARK: - Image Management
 
-    /// Check if an image exists locally, and if not, build it from the template's
-    /// embedded Containerfile (if any). Falls back to pulling for templates without
-    /// a Containerfile.
     func buildImageIfNeeded(template: any AgentTemplate) async throws {
-        // Check if image already exists
         if let _ = try? await ClientImage.get(reference: template.defaultImage) {
             return
         }
 
         guard let containerfileContent = template.containerfileContent else {
-            // No Containerfile — image will be pulled during fetch
             return
         }
 
-        // Write Containerfile to a temp directory and shell out to `container build`
         let tmpDir = FileManager.default.temporaryDirectory
             .appendingPathComponent("container-sandbox-build-\(UUID().uuidString)")
         try FileManager.default.createDirectory(at: tmpDir, withIntermediateDirectories: true)
@@ -79,13 +79,13 @@ struct SandboxManager: Sendable {
     // MARK: - Creation
 
     /// Ensure a sandbox exists for the given agent + workspace. Creates if missing.
-    /// Reads the OCI image config for user, env, entrypoint — matching native CLI behavior.
+    /// Returns the sandbox name and its snapshot.
     func ensureSandboxExists(
         template: any AgentTemplate,
         workspace: String,
         extraWorkspaces: [String] = []
-    ) async throws -> String {
-        let resolvedWorkspace = URL(fileURLWithPath: workspace, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path
+    ) async throws -> (name: String, snapshot: ContainerSnapshot) {
+        let resolvedWorkspace = Self.resolveWorkspacePath(workspace)
 
         guard FileManager.default.fileExists(atPath: resolvedWorkspace) else {
             throw SandboxError.workspaceNotFound(resolvedWorkspace)
@@ -93,45 +93,31 @@ struct SandboxManager: Sendable {
 
         let name = SandboxNaming.sandboxName(agent: template.name, workspacePath: resolvedWorkspace)
 
-        if let _ = try await getSandbox(name: name) {
-            return name
+        if let existing = try await getSandbox(name: name) {
+            return (name, existing)
         }
 
         let platform: ContainerizationOCI.Platform = .current
 
-        // Build or fetch the image
         try await buildImageIfNeeded(template: template)
 
         let img = try await ClientImage.fetch(reference: template.defaultImage, platform: platform)
         try await img.getCreateSnapshot(platform: platform)
 
-        // Get kernel
         let kernel = try await ClientKernel.getDefaultKernel(for: .current)
 
-        // Fetch and unpack the init image
         let initImageRef = ClientImage.initImageRef
         let initImage = try await ClientImage.fetch(reference: initImageRef, platform: .current)
         try await initImage.getCreateSnapshot(platform: .current)
 
-        // Read the OCI image config for user, env, entrypoint, workdir
         let imageConfig = try await img.config(for: platform).config
 
-        let imageEnv = imageConfig?.env ?? []
-        let imageWorkdir = imageConfig?.workingDir ?? "/"
-        let imageUser: ProcessConfiguration.User = {
-            if let user = imageConfig?.user, !user.isEmpty {
-                return .raw(userString: user)
-            }
-            return .id(uid: 0, gid: 0)
-        }()
-
-        // Build init process from image defaults
         let initProcess = ProcessConfiguration(
             executable: "/bin/sleep",
             arguments: ["infinity"],
-            environment: imageEnv,
-            workingDirectory: imageWorkdir,
-            user: imageUser
+            environment: imageConfig?.env ?? [],
+            workingDirectory: imageConfig?.workingDir ?? "/",
+            user: imageConfig?.user.flatMap { $0.isEmpty ? nil : $0 }.map { .raw(userString: $0) } ?? .id(uid: 0, gid: 0)
         )
 
         var config = ContainerConfiguration(
@@ -140,15 +126,13 @@ struct SandboxManager: Sendable {
             process: initProcess
         )
 
-        // Mount workspace at the same absolute path
         config.mounts.append(
             .virtiofs(source: resolvedWorkspace, destination: resolvedWorkspace, options: [])
         )
 
-        // Mount extra workspaces (append :ro for read-only)
         for extra in extraWorkspaces {
             let (path, readOnly) = Self.parseWorkspacePath(extra)
-            let resolved = URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path
+            let resolved = Self.resolveWorkspacePath(path)
             guard FileManager.default.fileExists(atPath: resolved) else {
                 throw SandboxError.workspaceNotFound(resolved)
             }
@@ -157,42 +141,35 @@ struct SandboxManager: Sendable {
             )
         }
 
-        // DNS
         config.dns = .init()
 
-        // Network — attach to the builtin network
         if let builtinNetwork = try await ClientNetwork.builtin {
-            let attachment = AttachmentConfiguration(
+            config.networks = [AttachmentConfiguration(
                 network: builtinNetwork.id,
                 options: AttachmentOptions(hostname: name)
-            )
-            config.networks = [attachment]
+            )]
         }
 
-        // Labels
         config.labels = [
-            "sandbox.managed": "true",
-            "sandbox.agent": template.name,
-            "sandbox.workspace": resolvedWorkspace,
+            SandboxLabels.managed: "true",
+            SandboxLabels.agent: template.name,
+            SandboxLabels.workspace: resolvedWorkspace,
         ]
 
-        // Template flags
         config.ssh = template.requiresSSH
         config.virtualization = template.requiresVirtualization
         config.useInit = template.useInit
-
-        // Resources
         config.resources.cpus = ProcessInfo.processInfo.processorCount
-        config.resources.memoryInBytes = 8 * 1024 * 1024 * 1024 // 8 GiB
+        config.resources.memoryInBytes = 8 * 1024 * 1024 * 1024
 
         try await client.create(configuration: config, options: .default, kernel: kernel, initImage: initImageRef)
 
-        return name
+        let snapshot = try await client.get(id: name)
+        return (name, snapshot)
     }
 
     // MARK: - Lifecycle
 
-    /// Bootstrap a sandbox (start it) if it's not already running.
     func bootstrapIfNeeded(name: String) async throws {
         let snapshot = try await client.get(id: name)
         if snapshot.status == .running {
@@ -207,14 +184,11 @@ struct SandboxManager: Sendable {
         try io.closeAfterStart()
     }
 
-    /// Run a process inside a running sandbox.
     func runProcess(
         name: String,
         configuration: ProcessConfiguration
     ) async throws -> Int32 {
-        let tty = configuration.terminal
-        let interactive = tty
-        let io = try ProcessIO.create(tty: tty, interactive: interactive, detach: false)
+        let io = try ProcessIO.create(tty: configuration.terminal, interactive: configuration.terminal, detach: false)
         defer { try? io.close() }
 
         let process = try await client.createProcess(
@@ -227,13 +201,30 @@ struct SandboxManager: Sendable {
         return try await io.handleProcess(process: process, log: log)
     }
 
-    /// Stop a sandbox and clear all session tracking.
+    /// Run a process with session tracking. Auto-stops the sandbox when the last session exits.
+    func runTracked(
+        name: String,
+        configuration: ProcessConfiguration
+    ) async throws -> Int32 {
+        let sessionId = try SessionTracker.create(for: name)
+        let exitCode: Int32
+        do {
+            exitCode = try await runProcess(name: name, configuration: configuration)
+        } catch {
+            let wasLast = SessionTracker.remove(sessionId: sessionId, for: name)
+            if wasLast { try? await stopSandbox(name: name) }
+            throw error
+        }
+        let wasLast = SessionTracker.remove(sessionId: sessionId, for: name)
+        if wasLast { try? await stopSandbox(name: name) }
+        return exitCode
+    }
+
     func stopSandbox(name: String) async throws {
         SessionTracker.clearAll(for: name)
         try await client.stop(id: name)
     }
 
-    /// Delete a sandbox (stops first if running).
     func deleteSandbox(name: String) async throws {
         SessionTracker.clearAll(for: name)
         let snapshot = try await client.get(id: name)
@@ -243,12 +234,16 @@ struct SandboxManager: Sendable {
         try await client.delete(id: name)
     }
 
-    /// Export a sandbox to an archive.
     func exportSandbox(name: String, to path: String) async throws {
         try await client.export(id: name, archive: URL(fileURLWithPath: path))
     }
 
-    /// Parse a workspace path, stripping `:ro` suffix if present.
+    // MARK: - Utilities
+
+    static func resolveWorkspacePath(_ path: String) -> String {
+        URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path
+    }
+
     static func parseWorkspacePath(_ input: String) -> (path: String, readOnly: Bool) {
         if input.hasSuffix(":ro") {
             return (String(input.dropLast(3)), true)

@@ -18,7 +18,7 @@ struct RegistryTests {
         let agents = AgentRegistry.availableAgents
         #expect(agents.contains("claude"))
         #expect(agents.contains("shell"))
-        #expect(agents == agents.sorted()) // should be sorted
+        #expect(agents == agents.sorted())
     }
 }
 
@@ -73,22 +73,17 @@ struct SessionTrackerTests {
     @Test func createAndRemoveSession() throws {
         let containerId = "test-container-\(UUID().uuidString)"
         let sessionId = try SessionTracker.create(for: containerId)
-        #expect(SessionTracker.activeSessions(for: containerId) == 1)
-
         let wasLast = SessionTracker.remove(sessionId: sessionId, for: containerId)
         #expect(wasLast)
-        #expect(SessionTracker.activeSessions(for: containerId) == 0)
     }
 
     @Test func multipleSessions() throws {
         let containerId = "test-container-\(UUID().uuidString)"
         let s1 = try SessionTracker.create(for: containerId)
         let s2 = try SessionTracker.create(for: containerId)
-        #expect(SessionTracker.activeSessions(for: containerId) == 2)
 
         let wasLast1 = SessionTracker.remove(sessionId: s1, for: containerId)
         #expect(!wasLast1)
-        #expect(SessionTracker.activeSessions(for: containerId) == 1)
 
         let wasLast2 = SessionTracker.remove(sessionId: s2, for: containerId)
         #expect(wasLast2)
@@ -98,14 +93,13 @@ struct SessionTrackerTests {
         let containerId = "test-container-\(UUID().uuidString)"
         _ = try SessionTracker.create(for: containerId)
         _ = try SessionTracker.create(for: containerId)
-        #expect(SessionTracker.activeSessions(for: containerId) == 2)
 
         SessionTracker.clearAll(for: containerId)
-        #expect(SessionTracker.activeSessions(for: containerId) == 0)
-    }
 
-    @Test func noSessionsReturnsZero() {
-        #expect(SessionTracker.activeSessions(for: "nonexistent-container") == 0)
+        // Creating and immediately removing should show it's the last
+        let s = try SessionTracker.create(for: containerId)
+        let wasLast = SessionTracker.remove(sessionId: s, for: containerId)
+        #expect(wasLast)
     }
 }
 

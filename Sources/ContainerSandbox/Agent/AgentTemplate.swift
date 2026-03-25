@@ -29,25 +29,35 @@ extension AgentTemplate {
         extraArgs: [String] = [],
         extraEnv: [String: String] = [:]
     ) -> ProcessConfiguration {
-        // Start with the init process's environment (includes PATH, etc.)
-        var env = baseConfig.environment
+        // Layer env with last-writer-wins deduplication on key.
+        // Order: image defaults < template defaults < host passthrough < caller extras
+        var envMap: [(key: String, value: String)] = []
 
-        // Merge template defaults
-        for (key, value) in defaultEnvironment {
-            env.append("\(key)=\(value)")
+        for entry in baseConfig.environment {
+            let (k, v) = Self.splitEnvEntry(entry)
+            envMap.append((k, v))
         }
-
-        // Passthrough host env vars that are set
+        for (key, value) in defaultEnvironment {
+            envMap.append((key, value))
+        }
         for key in passthroughEnvironment {
             if let value = ProcessInfo.processInfo.environment[key] {
+                envMap.append((key, value))
+            }
+        }
+        for (key, value) in extraEnv {
+            envMap.append((key, value))
+        }
+
+        // Deduplicate: keep last occurrence of each key
+        var seen = Set<String>()
+        var env: [String] = []
+        for (key, value) in envMap.reversed() {
+            if seen.insert(key).inserted {
                 env.append("\(key)=\(value)")
             }
         }
-
-        // Extra env from caller
-        for (key, value) in extraEnv {
-            env.append("\(key)=\(value)")
-        }
+        env.reverse()
 
         var args = entrypoint
         if !extraArgs.isEmpty {
@@ -62,6 +72,14 @@ extension AgentTemplate {
             terminal: true,
             user: baseConfig.user
         )
+    }
+
+    private static func splitEnvEntry(_ entry: String) -> (key: String, value: String) {
+        let parts = entry.split(separator: "=", maxSplits: 1)
+        if parts.count == 2 {
+            return (String(parts[0]), String(parts[1]))
+        }
+        return (entry, "")
     }
 }
 

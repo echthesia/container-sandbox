@@ -21,8 +21,7 @@ struct SandboxCommand: AsyncParsableCommand {
     )
 
     // handleProcess uses a task group with a signal-handler task that doesn't
-    // respond to cancellation. When errors occur, the group hangs waiting for it.
-    // Force-exit on errors to match the native CLI's behavior.
+    // respond to cancellation. Force-exit on errors to match the native CLI.
     static func main() async {
         do {
             var command = try parseAsRoot()
@@ -62,7 +61,6 @@ struct RunCommand: AsyncParsableCommand {
     var env: [String] = []
 
     func run() async throws {
-        // Split extra into workspace paths and agent args (separated by --)
         var extraWorkspaces: [String] = []
         var agentArgs: [String] = []
         var seenSeparator = false
@@ -78,89 +76,52 @@ struct RunCommand: AsyncParsableCommand {
 
         let manager = SandboxManager()
 
-        // Resolve agent template, or treat as existing sandbox name
         guard let template = AgentRegistry.resolve(agent) else {
-            // Maybe it's an existing sandbox name
+            // Treat as existing sandbox name
             guard let snapshot = try await manager.getSandbox(name: agent) else {
                 throw SandboxError.unknownAgent(agent)
             }
-            // Run a shell in existing sandbox
             try await manager.bootstrapIfNeeded(name: agent)
-            let initConfig = snapshot.configuration.initProcess
             let config = ProcessConfiguration(
                 executable: "/bin/bash",
                 arguments: [],
-                environment: initConfig.environment + ["TERM=xterm-256color"],
+                environment: snapshot.configuration.initProcess.environment + ["TERM=xterm-256color"],
                 terminal: true,
-                user: initConfig.user
+                user: snapshot.configuration.initProcess.user
             )
-            let sessionId = try SessionTracker.create(for: agent)
-            let exitCode: Int32
-            do {
-                exitCode = try await manager.runProcess(name: agent, configuration: config)
-            } catch {
-                let wasLast = SessionTracker.remove(sessionId: sessionId, for: agent)
-                if wasLast { try? await manager.stopSandbox(name: agent) }
-                throw error
-            }
-            let wasLast = SessionTracker.remove(sessionId: sessionId, for: agent)
-            if wasLast { try? await manager.stopSandbox(name: agent) }
+            let exitCode = try await manager.runTracked(name: agent, configuration: config)
             throw ExitCode(exitCode)
         }
 
-        // Resolve workspace
-        let resolvedWorkspace = URL(
-            fileURLWithPath: workspace,
-            relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)
-        ).standardized.path
-
-        // Parse extra env from -e flags
-        var extraEnv: [String: String] = [:]
-        for e in env {
-            let parts = e.split(separator: "=", maxSplits: 1)
-            if parts.count == 2 {
-                extraEnv[String(parts[0])] = String(parts[1])
-            }
-        }
-
-        // Ensure sandbox exists
-        let sandboxName = try await manager.ensureSandboxExists(
+        let (sandboxName, snapshot) = try await manager.ensureSandboxExists(
             template: template,
             workspace: workspace,
             extraWorkspaces: extraWorkspaces
         )
 
-        // Bootstrap if needed
         try await manager.bootstrapIfNeeded(name: sandboxName)
 
-        // Get the container snapshot to inherit user/env from init config
-        guard let snapshot = try await manager.getSandbox(name: sandboxName) else {
-            throw SandboxError.sandboxNotFound(sandboxName)
-        }
-
-        // Build process config for the agent
+        let extraEnv = Self.parseEnvFlags(env)
         let processConfig = template.processConfiguration(
             baseConfig: snapshot.configuration.initProcess,
-            workingDirectory: resolvedWorkspace,
+            workingDirectory: SandboxManager.resolveWorkspacePath(workspace),
             extraArgs: agentArgs,
             extraEnv: extraEnv
         )
 
-        // Track session and auto-stop when last session exits
-        let sessionId = try SessionTracker.create(for: sandboxName)
-        let exitCode: Int32
-        do {
-            exitCode = try await manager.runProcess(name: sandboxName, configuration: processConfig)
-        } catch {
-            let wasLast = SessionTracker.remove(sessionId: sessionId, for: sandboxName)
-            if wasLast { try? await manager.stopSandbox(name: sandboxName) }
-            throw error
-        }
-        let wasLast = SessionTracker.remove(sessionId: sessionId, for: sandboxName)
-        if wasLast {
-            try? await manager.stopSandbox(name: sandboxName)
-        }
+        let exitCode = try await manager.runTracked(name: sandboxName, configuration: processConfig)
         throw ExitCode(exitCode)
+    }
+
+    static func parseEnvFlags(_ flags: [String]) -> [String: String] {
+        var result: [String: String] = [:]
+        for e in flags {
+            let parts = e.split(separator: "=", maxSplits: 1)
+            if parts.count == 2 {
+                result[String(parts[0])] = String(parts[1])
+            }
+        }
+        return result
     }
 }
 
@@ -182,7 +143,7 @@ struct CreateCommand: AsyncParsableCommand {
         }
 
         let manager = SandboxManager()
-        let name = try await manager.ensureSandboxExists(
+        let (name, _) = try await manager.ensureSandboxExists(
             template: template,
             workspace: workspace
         )
@@ -223,13 +184,10 @@ struct ExecCommand: AsyncParsableCommand {
 
         try await manager.bootstrapIfNeeded(name: sandboxName)
 
-        // Inherit user and base env from the container's init process config
         let initConfig = snapshot.configuration.initProcess
         var envStrings = initConfig.environment
         envStrings.append("TERM=xterm-256color")
-        for e in env {
-            envStrings.append(e)
-        }
+        envStrings.append(contentsOf: env)
 
         let config = ProcessConfiguration(
             executable: executable,
@@ -240,18 +198,7 @@ struct ExecCommand: AsyncParsableCommand {
             user: initConfig.user
         )
 
-        // Track session and auto-stop when last session exits
-        let sessionId = try SessionTracker.create(for: sandboxName)
-        let exitCode: Int32
-        do {
-            exitCode = try await manager.runProcess(name: sandboxName, configuration: config)
-        } catch {
-            let wasLast = SessionTracker.remove(sessionId: sessionId, for: sandboxName)
-            if wasLast { try? await manager.stopSandbox(name: sandboxName) }
-            throw error
-        }
-        let wasLast = SessionTracker.remove(sessionId: sessionId, for: sandboxName)
-        if wasLast { try? await manager.stopSandbox(name: sandboxName) }
+        let exitCode = try await manager.runTracked(name: sandboxName, configuration: config)
         throw ExitCode(exitCode)
     }
 }
@@ -271,24 +218,20 @@ struct ListCommand: AsyncParsableCommand {
         let sandboxes = try await manager.listSandboxes()
 
         if sandboxes.isEmpty {
-            if !quiet {
-                print("No sandboxes found.")
-            }
+            if !quiet { print("No sandboxes found.") }
             return
         }
 
         if quiet {
-            for s in sandboxes {
-                print(s.id)
-            }
+            for s in sandboxes { print(s.id) }
         } else {
             func pad(_ str: String, _ width: Int) -> String {
                 str.padding(toLength: width, withPad: " ", startingAt: 0)
             }
             print("\(pad("NAME", 40)) \(pad("AGENT", 10)) \(pad("STATUS", 10)) WORKSPACE")
             for s in sandboxes {
-                let agent = s.configuration.labels["sandbox.agent"] ?? "?"
-                let workspace = s.configuration.labels["sandbox.workspace"] ?? "?"
+                let agent = s.configuration.labels[SandboxLabels.agent] ?? "?"
+                let workspace = s.configuration.labels[SandboxLabels.workspace] ?? "?"
                 print("\(pad(s.id, 40)) \(pad(agent, 10)) \(pad(s.status.rawValue, 10)) \(workspace)")
             }
         }
