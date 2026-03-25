@@ -16,6 +16,7 @@ struct SandboxCommand: AsyncParsableCommand {
             StopCommand.self,
             RemoveCommand.self,
             SaveCommand.self,
+            ProxyCommand.self,
         ],
         defaultSubcommand: RunCommand.self
     )
@@ -60,6 +61,15 @@ struct RunCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Set environment variables (KEY=VALUE)")
     var env: [String] = []
 
+    @Option(name: .long, help: "Network mode: full, none, or filtered (default: template default)")
+    var network: String?
+
+    @Option(name: .long, help: "Allow a host in filtered mode (e.g., *.github.com)")
+    var allowHost: [String] = []
+
+    @Option(name: .long, help: "Block a host in filtered mode")
+    var blockHost: [String] = []
+
     func run() async throws {
         var extraWorkspaces: [String] = []
         var agentArgs: [String] = []
@@ -93,20 +103,27 @@ struct RunCommand: AsyncParsableCommand {
             throw ExitCode(exitCode)
         }
 
+        let policy = Self.resolveNetworkPolicy(
+            template: template, network: network, allowHost: allowHost, blockHost: blockHost
+        )
+
         let (sandboxName, snapshot) = try await manager.ensureSandboxExists(
             template: template,
             workspace: workspace,
-            extraWorkspaces: extraWorkspaces
+            extraWorkspaces: extraWorkspaces,
+            networkPolicy: policy
         )
 
         try await manager.bootstrapIfNeeded(name: sandboxName)
 
+        let proxyAddress = policy.mode == .filtered ? "127.0.0.1:3128" : nil
         let extraEnv = Self.parseEnvFlags(env)
         let processConfig = template.processConfiguration(
             baseConfig: snapshot.configuration.initProcess,
             workingDirectory: SandboxManager.resolveWorkspacePath(workspace),
             extraArgs: agentArgs,
-            extraEnv: extraEnv
+            extraEnv: extraEnv,
+            proxyAddress: proxyAddress
         )
 
         let exitCode = try await manager.runTracked(name: sandboxName, configuration: processConfig)
@@ -123,6 +140,40 @@ struct RunCommand: AsyncParsableCommand {
         }
         return result
     }
+
+    /// Resolve network policy from template defaults + CLI overrides.
+    static func resolveNetworkPolicy(
+        template: any AgentTemplate,
+        network: String?,
+        allowHost: [String],
+        blockHost: [String]
+    ) -> NetworkPolicy {
+        var policy = template.defaultNetworkPolicy
+
+        if let network {
+            guard let mode = NetworkMode(rawValue: network) else {
+                // Will be caught by ArgumentParser validation in practice.
+                return policy
+            }
+            switch mode {
+            case .full: policy = .full
+            case .none: policy = .none
+            case .filtered:
+                if policy.mode != .filtered {
+                    policy = .filtered(allowedHosts: [])
+                }
+            }
+        }
+
+        if !allowHost.isEmpty {
+            policy.allowedHosts.append(contentsOf: allowHost)
+        }
+        if !blockHost.isEmpty {
+            policy.blockedHosts.append(contentsOf: blockHost)
+        }
+
+        return policy
+    }
 }
 
 struct CreateCommand: AsyncParsableCommand {
@@ -137,15 +188,29 @@ struct CreateCommand: AsyncParsableCommand {
     @Argument(help: "Workspace directory")
     var workspace: String = "."
 
+    @Option(name: .long, help: "Network mode: full, none, or filtered")
+    var network: String?
+
+    @Option(name: .long, help: "Allow a host in filtered mode (e.g., *.github.com)")
+    var allowHost: [String] = []
+
+    @Option(name: .long, help: "Block a host in filtered mode")
+    var blockHost: [String] = []
+
     func run() async throws {
         guard let template = AgentRegistry.resolve(agent) else {
             throw SandboxError.unknownAgent(agent)
         }
 
+        let policy = RunCommand.resolveNetworkPolicy(
+            template: template, network: network, allowHost: allowHost, blockHost: blockHost
+        )
+
         let manager = SandboxManager()
         let (name, _) = try await manager.ensureSandboxExists(
             template: template,
-            workspace: workspace
+            workspace: workspace,
+            networkPolicy: policy
         )
         print(name)
     }
@@ -189,6 +254,15 @@ struct ExecCommand: AsyncParsableCommand {
         envStrings.append("TERM=xterm-256color")
         envStrings.append(contentsOf: env)
 
+        // Inject proxy env vars if sandbox is in filtered mode.
+        let networkLabel = snapshot.configuration.labels[SandboxLabels.network]
+        if networkLabel == NetworkMode.filtered.rawValue {
+            let proxyUrl = "http://127.0.0.1:3128"
+            envStrings.append("HTTP_PROXY=\(proxyUrl)")
+            envStrings.append("HTTPS_PROXY=\(proxyUrl)")
+            envStrings.append("NO_PROXY=localhost,127.0.0.1")
+        }
+
         let config = ProcessConfiguration(
             executable: executable,
             arguments: Array(command.dropFirst()),
@@ -228,11 +302,12 @@ struct ListCommand: AsyncParsableCommand {
             func pad(_ str: String, _ width: Int) -> String {
                 str.padding(toLength: width, withPad: " ", startingAt: 0)
             }
-            print("\(pad("NAME", 40)) \(pad("AGENT", 10)) \(pad("STATUS", 10)) WORKSPACE")
+            print("\(pad("NAME", 40)) \(pad("AGENT", 10)) \(pad("STATUS", 10)) \(pad("NETWORK", 10)) WORKSPACE")
             for s in sandboxes {
                 let agent = s.configuration.labels[SandboxLabels.agent] ?? "?"
                 let workspace = s.configuration.labels[SandboxLabels.workspace] ?? "?"
-                print("\(pad(s.id, 40)) \(pad(agent, 10)) \(pad(s.status.rawValue, 10)) \(workspace)")
+                let network = s.configuration.labels[SandboxLabels.network] ?? "full"
+                print("\(pad(s.id, 40)) \(pad(agent, 10)) \(pad(s.status.rawValue, 10)) \(pad(network, 10)) \(workspace)")
             }
         }
     }
@@ -291,5 +366,28 @@ struct SaveCommand: AsyncParsableCommand {
         let manager = SandboxManager()
         try await manager.exportSandbox(name: sandboxName, to: output)
         print("Saved \(sandboxName) to \(output)")
+    }
+}
+
+/// Hidden subcommand used by ProxyManager to run the proxy server.
+struct ProxyCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "_proxy",
+        abstract: "",
+        shouldDisplay: false
+    )
+
+    @Option(name: .long, help: "Unix domain socket path")
+    var socket: String
+
+    @Option(name: .long, help: "Path to JSON policy config file")
+    var config: String
+
+    func run() async throws {
+        let data = try Data(contentsOf: URL(fileURLWithPath: config))
+        let policy = try JSONDecoder().decode(NetworkPolicy.self, from: data)
+        let filter = DomainFilter(policy: policy)
+        let server = ProxyServer(socketPath: socket, filter: filter)
+        try await server.run()
     }
 }

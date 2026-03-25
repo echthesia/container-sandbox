@@ -33,7 +33,7 @@ enum SandboxNaming {
         return result.isEmpty ? "workspace" : result.lowercased()
     }
 
-    private static func shortHash(_ path: String) -> String {
+    static func shortHash(_ path: String) -> String {
         let hash = SHA256.hash(data: Data(path.utf8))
         return hash.prefix(4).map { String(format: "%02x", $0) }.joined()
     }

@@ -11,6 +11,8 @@ enum SandboxLabels {
     static let managed = "sandbox.managed"
     static let agent = "sandbox.agent"
     static let workspace = "sandbox.workspace"
+    static let network = "sandbox.network"
+    static let allowedHosts = "sandbox.allowed-hosts"
 }
 
 /// Manages sandbox lifecycle using the ContainerClient API.
@@ -83,7 +85,8 @@ struct SandboxManager: Sendable {
     func ensureSandboxExists(
         template: any AgentTemplate,
         workspace: String,
-        extraWorkspaces: [String] = []
+        extraWorkspaces: [String] = [],
+        networkPolicy: NetworkPolicy = .full
     ) async throws -> (name: String, snapshot: ContainerSnapshot) {
         let resolvedWorkspace = Self.resolveWorkspacePath(workspace)
 
@@ -141,19 +144,33 @@ struct SandboxManager: Sendable {
             )
         }
 
-        config.dns = .init()
-
-        if let builtinNetwork = try await ClientNetwork.builtin {
-            config.networks = [AttachmentConfiguration(
-                network: builtinNetwork.id,
-                options: AttachmentOptions(hostname: name)
-            )]
+        switch networkPolicy.mode {
+        case .full:
+            config.dns = .init()
+            if let builtinNetwork = try await ClientNetwork.builtin {
+                config.networks = [AttachmentConfiguration(
+                    network: builtinNetwork.id,
+                    options: AttachmentOptions(hostname: name)
+                )]
+            }
+        case .none:
+            // No network, no DNS.
+            break
+        case .filtered:
+            // No network interface. Start proxy and mount its UDS into the VM.
+            // The framework auto-detects socket mounts and relays via vsock (.into direction).
+            let socketPath = try ProxyManager.startIfNeeded(name: name, policy: networkPolicy)
+            config.mounts.append(
+                .virtiofs(source: socketPath, destination: "/run/proxy.sock", options: [])
+            )
         }
 
         config.labels = [
             SandboxLabels.managed: "true",
             SandboxLabels.agent: template.name,
             SandboxLabels.workspace: resolvedWorkspace,
+            SandboxLabels.network: networkPolicy.mode.rawValue,
+            SandboxLabels.allowedHosts: networkPolicy.allowedHostsLabel,
         ]
 
         config.ssh = template.requiresSSH
@@ -162,7 +179,24 @@ struct SandboxManager: Sendable {
         config.resources.cpus = ProcessInfo.processInfo.processorCount
         config.resources.memoryInBytes = 8 * 1024 * 1024 * 1024
 
-        try await client.create(configuration: config, options: .default, kernel: kernel, initImage: initImageRef)
+        // Use custom init image for filtered mode (contains the proxy bridge).
+        let resolvedInitImage: String?
+        switch networkPolicy.mode {
+        case .filtered:
+            let customInitRef = "container-sandbox-init:latest"
+            if let _ = try? await ClientImage.get(reference: customInitRef) {
+                let customInit = try await ClientImage.fetch(reference: customInitRef, platform: .current)
+                try await customInit.getCreateSnapshot(platform: .current)
+                resolvedInitImage = customInitRef
+            } else {
+                log.warning("Custom init image not found; filtered mode proxy bridge will not run at VM level")
+                resolvedInitImage = initImageRef
+            }
+        default:
+            resolvedInitImage = initImageRef
+        }
+
+        try await client.create(configuration: config, options: .default, kernel: kernel, initImage: resolvedInitImage)
 
         let snapshot = try await client.get(id: name)
         return (name, snapshot)
@@ -172,6 +206,18 @@ struct SandboxManager: Sendable {
 
     func bootstrapIfNeeded(name: String) async throws {
         let snapshot = try await client.get(id: name)
+
+        // For filtered sandboxes, ensure the proxy is running before bootstrap
+        // (socket must exist for the vsock relay setup).
+        let networkMode = snapshot.configuration.labels[SandboxLabels.network]
+        if networkMode == NetworkMode.filtered.rawValue {
+            // Reconstruct a minimal policy from labels for the proxy.
+            let allowedHosts = (snapshot.configuration.labels[SandboxLabels.allowedHosts] ?? "")
+                .split(separator: ",").map(String.init)
+            let policy = NetworkPolicy.filtered(allowedHosts: allowedHosts)
+            try ProxyManager.startIfNeeded(name: name, policy: policy)
+        }
+
         if snapshot.status == .running {
             return
         }
@@ -222,11 +268,13 @@ struct SandboxManager: Sendable {
 
     func stopSandbox(name: String) async throws {
         SessionTracker.clearAll(for: name)
+        ProxyManager.stop(name: name)
         try await client.stop(id: name)
     }
 
     func deleteSandbox(name: String) async throws {
         SessionTracker.clearAll(for: name)
+        ProxyManager.stop(name: name)
         let snapshot = try await client.get(id: name)
         if snapshot.status == .running {
             try await client.stop(id: name)

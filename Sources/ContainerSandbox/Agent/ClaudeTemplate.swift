@@ -25,6 +25,10 @@ struct ClaudeTemplate: AgentTemplate, Sendable {
     let requiresSSH = true
     let requiresVirtualization = false
     let useInit = true
+    let defaultNetworkPolicy = NetworkPolicy.filtered(allowedHosts: [
+        "*.anthropic.com",
+        "*.claude.ai",
+    ])
 
     let containerfileContent: String? = ##"""
     FROM docker.io/ubuntu:24.04

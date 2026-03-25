@@ -14,10 +14,12 @@ protocol AgentTemplate: Sendable {
     var requiresSSH: Bool { get }
     var requiresVirtualization: Bool { get }
     var useInit: Bool { get }
+    var defaultNetworkPolicy: NetworkPolicy { get }
 }
 
 extension AgentTemplate {
     var containerfileContent: String? { nil }
+    var defaultNetworkPolicy: NetworkPolicy { .full }
 }
 
 extension AgentTemplate {
@@ -27,7 +29,8 @@ extension AgentTemplate {
         baseConfig: ProcessConfiguration,
         workingDirectory: String,
         extraArgs: [String] = [],
-        extraEnv: [String: String] = [:]
+        extraEnv: [String: String] = [:],
+        proxyAddress: String? = nil
     ) -> ProcessConfiguration {
         // Layer env with last-writer-wins deduplication on key.
         // Order: image defaults < template defaults < host passthrough < caller extras
@@ -47,6 +50,11 @@ extension AgentTemplate {
         }
         for (key, value) in extraEnv {
             envMap.append((key, value))
+        }
+        if let proxyAddress {
+            envMap.append(("HTTP_PROXY", "http://\(proxyAddress)"))
+            envMap.append(("HTTPS_PROXY", "http://\(proxyAddress)"))
+            envMap.append(("NO_PROXY", "localhost,127.0.0.1"))
         }
 
         // Deduplicate: keep last occurrence of each key

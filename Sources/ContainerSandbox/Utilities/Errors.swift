@@ -5,6 +5,7 @@ enum SandboxError: LocalizedError {
     case sandboxNotFound(String)
     case workspaceNotFound(String)
     case imageBuildFailed(String)
+    case proxyStartFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -16,6 +17,8 @@ enum SandboxError: LocalizedError {
             return "Workspace directory not found: \(path)"
         case .imageBuildFailed(let message):
             return "Failed to build sandbox image: \(message)"
+        case .proxyStartFailed(let message):
+            return "Failed to start network proxy: \(message)"
         }
     }
 }
