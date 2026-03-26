@@ -6,6 +6,20 @@ enum ProxyManager {
     private static let stateDir = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".local/state/container-sandbox/proxy")
 
+    /// Port the proxy bridge listens on inside the VM.
+    /// Must match `listenAddr` in init-image/cmd/proxy-bridge/main.go.
+    static let proxyPort = 3128
+
+    /// Environment variables that direct container traffic through the proxy.
+    static var proxyEnvironment: [(key: String, value: String)] {
+        let url = "http://127.0.0.1:\(proxyPort)"
+        return [
+            ("HTTP_PROXY", url),
+            ("HTTPS_PROXY", url),
+            ("NO_PROXY", "localhost,127.0.0.1"),
+        ]
+    }
+
     /// State file tracking a running proxy.
     struct ProxyState: Codable {
         let pid: Int32
@@ -51,7 +65,10 @@ enum ProxyManager {
         process.executableURL = URL(fileURLWithPath: execPath)
         process.arguments = ["_proxy", "--socket", socket, "--config", configPath.path]
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.nullDevice
+        // Log proxy stderr for diagnostics (bind failures, policy errors, etc.)
+        let logPath = stateDir.appendingPathComponent("\(name)-proxy.log")
+        FileManager.default.createFile(atPath: logPath.path, contents: nil)
+        process.standardError = FileHandle(forWritingAtPath: logPath.path) ?? FileHandle.nullDevice
 
         // Detach so the proxy outlives this process.
         process.qualityOfService = .utility
@@ -62,11 +79,14 @@ enum ProxyManager {
 
         // Wait briefly for the socket to appear.
         for _ in 0..<20 {
-            if FileManager.default.fileExists(atPath: socket) { break }
+            if FileManager.default.fileExists(atPath: socket) { return socket }
             usleep(50_000) // 50ms
         }
 
-        return socket
+        // If the socket never appeared, the proxy failed to start.
+        let logHint = FileManager.default.fileExists(atPath: logPath.path)
+            ? " (see \(logPath.path))" : ""
+        throw SandboxError.proxyStartFailed("proxy socket not created after 1s\(logHint)")
     }
 
     /// Stop the proxy for a sandbox.
@@ -81,6 +101,8 @@ enum ProxyManager {
         try? FileManager.default.removeItem(at: stateFilePath(for: name))
         let configPath = stateDir.appendingPathComponent("\(name)-config.json")
         try? FileManager.default.removeItem(at: configPath)
+        let logPath = stateDir.appendingPathComponent("\(name)-proxy.log")
+        try? FileManager.default.removeItem(at: logPath)
     }
 
     // MARK: - Private

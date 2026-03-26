@@ -45,8 +45,8 @@ final class ProxyServer: Sendable {
         let channel = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
         proxyLog.info("Proxy listening on \(socketPath)")
 
-        // Set permissions so the framework can access the socket.
-        chmod(socketPath, 0o666)
+        // Owner-only access — both proxy and framework run as the same user.
+        chmod(socketPath, 0o600)
 
         try await channel.closeFuture.get()
     }
@@ -115,6 +115,7 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
     }
 
     /// Establish a TCP tunnel to the target host.
+    /// Post-connect: checks the resolved IP against blocked CIDRs before sending 200.
     private func establishTunnel(context: ChannelHandlerContext, host: String, port: Int) {
         let group = context.eventLoop
 
@@ -123,6 +124,20 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
             .whenComplete { result in
                 switch result {
                 case .success(let remoteChannel):
+                    // Check resolved IP against blocked CIDRs (catches DNS rebinding).
+                    let resolvedIP: String?
+                    switch remoteChannel.remoteAddress {
+                    case .v4(let addr): resolvedIP = addr.host
+                    case .v6(let addr): resolvedIP = addr.host
+                    default: resolvedIP = nil
+                    }
+                    if let ip = resolvedIP, self.filter.isBlockedCIDR(ip) {
+                        proxyLog.warning("DENY (resolved CIDR) CONNECT \(host):\(port) -> \(ip)")
+                        remoteChannel.close(promise: nil)
+                        self.sendResponse(context: context, status: .forbidden,
+                            body: "Blocked: resolved to private IP \(ip)\n")
+                        return
+                    }
                     self.tunnelEstablished(context: context, remoteChannel: remoteChannel)
                 case .failure(let error):
                     proxyLog.error("Failed to connect to \(host):\(port): \(error)")
@@ -180,21 +195,8 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
     }
 
     private func parseTarget(_ target: String) -> (host: String, port: Int) {
-        // Handle [ipv6]:port
-        if target.hasPrefix("["), let bracketEnd = target.firstIndex(of: "]") {
-            let host = String(target[target.index(after: target.startIndex)..<bracketEnd])
-            let rest = target[target.index(after: bracketEnd)...]
-            if rest.hasPrefix(":"), let port = Int(rest.dropFirst()) {
-                return (host, port)
-            }
-            return (host, 443)
-        }
-
-        let parts = target.split(separator: ":", maxSplits: 1)
-        if parts.count == 2, let port = Int(parts[1]) {
-            return (String(parts[0]), port)
-        }
-        return (target, 443)
+        let (host, port) = parseHostPort(target)
+        return (host, port ?? 443)
     }
 }
 

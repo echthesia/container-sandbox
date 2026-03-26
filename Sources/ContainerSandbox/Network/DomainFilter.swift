@@ -63,7 +63,7 @@ extension DomainFilter {
     }
 
     private func matches(host: String, port: Int, pattern: String) -> Bool {
-        let (patternHost, patternPort) = parseHostPort(pattern)
+        let (patternHost, patternPort) = parsePattern(pattern)
 
         // If pattern specifies a port, it must match.
         if let pp = patternPort, pp != port {
@@ -85,26 +85,9 @@ extension DomainFilter {
     }
 
     /// Split "host:port" or "host" into components.
-    private func parseHostPort(_ pattern: String) -> (host: String, port: Int?) {
-        // Handle IPv6 in brackets: [::1]:443
-        if pattern.hasPrefix("["), let bracketEnd = pattern.firstIndex(of: "]") {
-            let host = String(pattern[pattern.index(after: pattern.startIndex)...pattern.index(before: bracketEnd)])
-            let afterBracket = pattern[pattern.index(after: bracketEnd)...]
-            if afterBracket.hasPrefix(":"), let port = Int(afterBracket.dropFirst()) {
-                return (host, port)
-            }
-            return (host, nil)
-        }
-
-        // Wildcard or regular host — split on last colon only if the suffix is a valid port.
-        if let lastColon = pattern.lastIndex(of: ":") {
-            let possiblePort = String(pattern[pattern.index(after: lastColon)...])
-            if let port = Int(possiblePort) {
-                return (String(pattern[..<lastColon]), port)
-            }
-        }
-
-        return (pattern, nil)
+    /// Delegates to the shared parseHostPort utility.
+    private func parsePattern(_ pattern: String) -> (host: String, port: Int?) {
+        parseHostPort(pattern)
     }
 }
 
@@ -142,6 +125,9 @@ extension DomainFilter {
     }
 
     private func ipv6ToBytes(_ addr: String) -> [UInt8]? {
+        // Reject addresses with more than one :: (e.g. "1::2::3").
+        if addr.components(separatedBy: "::").count > 2 { return nil }
+
         var groups = addr.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
 
         // Expand :: shorthand.

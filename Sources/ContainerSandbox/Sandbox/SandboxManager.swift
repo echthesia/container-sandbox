@@ -11,8 +11,10 @@ enum SandboxLabels {
     static let managed = "sandbox.managed"
     static let agent = "sandbox.agent"
     static let workspace = "sandbox.workspace"
-    static let network = "sandbox.network"
+    static let direction = "sandbox.direction"
     static let allowedHosts = "sandbox.allowed-hosts"
+    static let blockedHosts = "sandbox.blocked-hosts"
+    static let blockedCIDRs = "sandbox.blocked-cidrs"
 }
 
 /// Manages sandbox lifecycle using the ContainerClient API.
@@ -86,7 +88,7 @@ struct SandboxManager: Sendable {
         template: any AgentTemplate,
         workspace: String,
         extraWorkspaces: [String] = [],
-        networkPolicy: NetworkPolicy = .full
+        networkPolicy: NetworkPolicy = .allow
     ) async throws -> (name: String, snapshot: ContainerSnapshot) {
         let resolvedWorkspace = Self.resolveWorkspacePath(workspace)
 
@@ -97,6 +99,17 @@ struct SandboxManager: Sendable {
         let name = SandboxNaming.sandboxName(agent: template.name, workspacePath: resolvedWorkspace)
 
         if let existing = try await getSandbox(name: name) {
+            // Verify the existing sandbox's network policy matches what was requested.
+            guard let existingPolicy = NetworkPolicy.fromLabels(existing.configuration.labels) else {
+                throw SandboxError.outdatedSandbox(name)
+            }
+            if existingPolicy != networkPolicy {
+                throw SandboxError.networkPolicyMismatch(
+                    name: name,
+                    existing: existingPolicy.direction.rawValue,
+                    requested: networkPolicy.direction.rawValue
+                )
+            }
             return (name, existing)
         }
 
@@ -108,10 +121,6 @@ struct SandboxManager: Sendable {
         try await img.getCreateSnapshot(platform: platform)
 
         let kernel = try await ClientKernel.getDefaultKernel(for: .current)
-
-        let initImageRef = ClientImage.initImageRef
-        let initImage = try await ClientImage.fetch(reference: initImageRef, platform: .current)
-        try await initImage.getCreateSnapshot(platform: .current)
 
         let imageConfig = try await img.config(for: platform).config
 
@@ -144,33 +153,21 @@ struct SandboxManager: Sendable {
             )
         }
 
-        switch networkPolicy.mode {
-        case .full:
-            config.dns = .init()
-            if let builtinNetwork = try await ClientNetwork.builtin {
-                config.networks = [AttachmentConfiguration(
-                    network: builtinNetwork.id,
-                    options: AttachmentOptions(hostname: name)
-                )]
-            }
-        case .none:
-            // No network, no DNS.
-            break
-        case .filtered:
-            // No network interface. Start proxy and mount its UDS into the VM.
-            // The framework auto-detects socket mounts and relays via vsock (.into direction).
-            let socketPath = try ProxyManager.startIfNeeded(name: name, policy: networkPolicy)
-            config.mounts.append(
-                .virtiofs(source: socketPath, destination: "/run/proxy.sock", options: [])
-            )
-        }
+        // Always start proxy and mount its UDS into the VM.
+        // The framework auto-detects socket mounts and relays via vsock (.into direction).
+        let socketPath = try ProxyManager.startIfNeeded(name: name, policy: networkPolicy)
+        config.mounts.append(
+            .virtiofs(source: socketPath, destination: "/run/proxy.sock", options: [])
+        )
 
         config.labels = [
             SandboxLabels.managed: "true",
             SandboxLabels.agent: template.name,
             SandboxLabels.workspace: resolvedWorkspace,
-            SandboxLabels.network: networkPolicy.mode.rawValue,
+            SandboxLabels.direction: networkPolicy.direction.rawValue,
             SandboxLabels.allowedHosts: networkPolicy.allowedHostsLabel,
+            SandboxLabels.blockedHosts: networkPolicy.blockedHostsLabel,
+            SandboxLabels.blockedCIDRs: networkPolicy.blockedCIDRsLabel,
         ]
 
         config.ssh = template.requiresSSH
@@ -179,24 +176,15 @@ struct SandboxManager: Sendable {
         config.resources.cpus = ProcessInfo.processInfo.processorCount
         config.resources.memoryInBytes = 8 * 1024 * 1024 * 1024
 
-        // Use custom init image for filtered mode (contains the proxy bridge).
-        let resolvedInitImage: String?
-        switch networkPolicy.mode {
-        case .filtered:
-            let customInitRef = "container-sandbox-init:latest"
-            if let _ = try? await ClientImage.get(reference: customInitRef) {
-                let customInit = try await ClientImage.fetch(reference: customInitRef, platform: .current)
-                try await customInit.getCreateSnapshot(platform: .current)
-                resolvedInitImage = customInitRef
-            } else {
-                log.warning("Custom init image not found; filtered mode proxy bridge will not run at VM level")
-                resolvedInitImage = initImageRef
-            }
-        default:
-            resolvedInitImage = initImageRef
+        // Always use custom init image (contains the proxy bridge).
+        let customInitRef = "container-sandbox-init:latest"
+        guard let _ = try? await ClientImage.get(reference: customInitRef) else {
+            throw SandboxError.initImageMissing
         }
+        let customInit = try await ClientImage.fetch(reference: customInitRef, platform: .current)
+        try await customInit.getCreateSnapshot(platform: .current)
 
-        try await client.create(configuration: config, options: .default, kernel: kernel, initImage: resolvedInitImage)
+        try await client.create(configuration: config, options: .default, kernel: kernel, initImage: customInitRef)
 
         let snapshot = try await client.get(id: name)
         return (name, snapshot)
@@ -207,16 +195,13 @@ struct SandboxManager: Sendable {
     func bootstrapIfNeeded(name: String) async throws {
         let snapshot = try await client.get(id: name)
 
-        // For filtered sandboxes, ensure the proxy is running before bootstrap
-        // (socket must exist for the vsock relay setup).
-        let networkMode = snapshot.configuration.labels[SandboxLabels.network]
-        if networkMode == NetworkMode.filtered.rawValue {
-            // Reconstruct a minimal policy from labels for the proxy.
-            let allowedHosts = (snapshot.configuration.labels[SandboxLabels.allowedHosts] ?? "")
-                .split(separator: ",").map(String.init)
-            let policy = NetworkPolicy.filtered(allowedHosts: allowedHosts)
-            try ProxyManager.startIfNeeded(name: name, policy: policy)
+        // Detect old-format sandboxes missing the direction label.
+        guard let policy = NetworkPolicy.fromLabels(snapshot.configuration.labels) else {
+            throw SandboxError.outdatedSandbox(name)
         }
+
+        // Always ensure proxy is running with current policy from labels.
+        try ProxyManager.startIfNeeded(name: name, policy: policy)
 
         if snapshot.status == .running {
             return

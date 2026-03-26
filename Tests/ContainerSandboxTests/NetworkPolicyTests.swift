@@ -5,38 +5,41 @@ import Testing
 @Suite("NetworkPolicy")
 struct NetworkPolicyTests {
 
-    @Test func fullPolicyDefaults() {
-        let policy = NetworkPolicy.full
-        #expect(policy.mode == .full)
-        #expect(policy.allowedHosts.isEmpty)
+    @Test func allowPolicyDefaults() {
+        let policy = NetworkPolicy.allow
+        #expect(policy.direction == .allow)
+        #expect(policy.allowedHosts == NetworkPolicy.defaultAllowedHosts)
         #expect(policy.blockedHosts.isEmpty)
+        #expect(policy.blockedCIDRs == NetworkPolicy.defaultBlockedCIDRs)
     }
 
-    @Test func nonePolicyDefaults() {
-        let policy = NetworkPolicy.none
-        #expect(policy.mode == .none)
-    }
-
-    @Test func filteredWithHosts() {
-        let policy = NetworkPolicy.filtered(allowedHosts: ["*.anthropic.com", "*.claude.ai"])
-        #expect(policy.mode == .filtered)
+    @Test func denyPolicyDefaults() {
+        let policy = NetworkPolicy.deny
         #expect(policy.direction == .deny)
-        #expect(policy.allowedHosts == ["*.anthropic.com", "*.claude.ai"])
+        #expect(policy.allowedHosts == NetworkPolicy.defaultAllowedHosts)
+    }
+
+    @Test func denyWithHosts() {
+        let policy = NetworkPolicy.deny(allowedHosts: ["*.claude.ai"])
+        #expect(policy.direction == .deny)
+        #expect(policy.allowedHosts.contains("*.anthropic.com"))
+        #expect(policy.allowedHosts.contains("*.claude.ai"))
         #expect(policy.blockedCIDRs == NetworkPolicy.defaultBlockedCIDRs)
     }
 
     @Test func allowedHostsLabel() {
-        let policy = NetworkPolicy.filtered(allowedHosts: ["a.com", "b.com"])
-        #expect(policy.allowedHostsLabel == "a.com,b.com")
+        let policy = NetworkPolicy.deny(allowedHosts: ["a.com", "b.com"])
+        #expect(policy.allowedHostsLabel.contains("a.com"))
+        #expect(policy.allowedHostsLabel.contains("b.com"))
     }
 
-    @Test func emptyAllowedHostsLabel() {
-        let policy = NetworkPolicy.full
-        #expect(policy.allowedHostsLabel == "")
+    @Test func emptyBlockedHostsLabel() {
+        let policy = NetworkPolicy.allow
+        #expect(policy.blockedHostsLabel == "")
     }
 
     @Test func codableRoundTrip() throws {
-        let original = NetworkPolicy.filtered(
+        let original = NetworkPolicy.deny(
             allowedHosts: ["*.anthropic.com"],
             blockedHosts: ["evil.com"],
             blockedCIDRs: ["10.0.0.0/8"]
@@ -46,30 +49,75 @@ struct NetworkPolicyTests {
         #expect(decoded == original)
     }
 
-    @Test func resolveNetworkPolicyDefaultsToTemplate() {
+    @Test func resolveNetworkPolicyDefaultsToTemplate() throws {
         let template = ClaudeTemplate()
-        let policy = RunCommand.resolveNetworkPolicy(
-            template: template, network: nil, allowHost: [], blockHost: []
+        let policy = try RunCommand.resolveNetworkPolicy(
+            template: template, policy: nil, allowHost: [], blockHost: []
         )
-        #expect(policy.mode == .filtered)
+        #expect(policy.direction == .deny)
         #expect(policy.allowedHosts.contains("*.anthropic.com"))
     }
 
-    @Test func resolveNetworkPolicyOverridesMode() {
+    @Test func resolveNetworkPolicyOverridesDirection() throws {
         let template = ClaudeTemplate()
-        let policy = RunCommand.resolveNetworkPolicy(
-            template: template, network: "full", allowHost: [], blockHost: []
+        let policy = try RunCommand.resolveNetworkPolicy(
+            template: template, policy: "allow", allowHost: [], blockHost: []
         )
-        #expect(policy.mode == .full)
+        #expect(policy.direction == .allow)
     }
 
-    @Test func resolveNetworkPolicyAppendsHosts() {
+    @Test func resolveNetworkPolicyAppendsHosts() throws {
         let template = ClaudeTemplate()
-        let policy = RunCommand.resolveNetworkPolicy(
-            template: template, network: nil, allowHost: ["*.github.com"], blockHost: ["evil.com"]
+        let policy = try RunCommand.resolveNetworkPolicy(
+            template: template, policy: nil, allowHost: ["*.github.com"], blockHost: ["evil.com"]
         )
         #expect(policy.allowedHosts.contains("*.anthropic.com"))
         #expect(policy.allowedHosts.contains("*.github.com"))
         #expect(policy.blockedHosts.contains("evil.com"))
+    }
+
+    @Test func resolveNetworkPolicyRejectsInvalidDirection() {
+        #expect(throws: (any Error).self) {
+            try RunCommand.resolveNetworkPolicy(
+                template: ClaudeTemplate(), policy: "yolo", allowHost: [], blockHost: []
+            )
+        }
+    }
+
+    @Test func labelRoundTrip() {
+        // Encode a policy to labels, then decode using the same logic as bootstrapIfNeeded.
+        let original = NetworkPolicy.deny(
+            allowedHosts: ["*.github.com", "api.example.com:443"],
+            blockedHosts: ["evil.com"],
+            blockedCIDRs: ["10.0.0.0/8", "172.16.0.0/12"]
+        )
+
+        // Simulate label encoding (same as SandboxManager.ensureSandboxExists).
+        let labels: [String: String] = [
+            "sandbox.direction": original.direction.rawValue,
+            "sandbox.allowed-hosts": original.allowedHostsLabel,
+            "sandbox.blocked-hosts": original.blockedHostsLabel,
+            "sandbox.blocked-cidrs": original.blockedCIDRsLabel,
+        ]
+
+        // Simulate label decoding (same as SandboxManager.bootstrapIfNeeded).
+        let direction = PolicyDirection(rawValue: labels["sandbox.direction"]!)!
+        let allowedHosts = labels["sandbox.allowed-hosts"]!
+            .split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        let blockedHosts = labels["sandbox.blocked-hosts"]!
+            .split(separator: ",").map(String.init).filter { !$0.isEmpty }
+        let blockedCIDRsLabel = labels["sandbox.blocked-cidrs"]!
+        let blockedCIDRs = blockedCIDRsLabel.isEmpty
+            ? NetworkPolicy.defaultBlockedCIDRs
+            : blockedCIDRsLabel.split(separator: ",").map(String.init)
+
+        let decoded = NetworkPolicy(
+            direction: direction,
+            allowedHosts: allowedHosts,
+            blockedHosts: blockedHosts,
+            blockedCIDRs: blockedCIDRs
+        )
+
+        #expect(decoded == original)
     }
 }
