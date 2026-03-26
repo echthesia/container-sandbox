@@ -106,8 +106,8 @@ struct SandboxManager: Sendable {
             if existingPolicy != networkPolicy {
                 throw SandboxError.networkPolicyMismatch(
                     name: name,
-                    existing: existingPolicy.direction.rawValue,
-                    requested: networkPolicy.direction.rawValue
+                    existing: existingPolicy,
+                    requested: networkPolicy
                 )
             }
             return (name, existing)

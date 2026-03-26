@@ -7,7 +7,7 @@ enum SandboxError: LocalizedError {
     case imageBuildFailed(String)
     case proxyStartFailed(String)
     case initImageMissing
-    case networkPolicyMismatch(name: String, existing: String, requested: String)
+    case networkPolicyMismatch(name: String, existing: NetworkPolicy, requested: NetworkPolicy)
     case outdatedSandbox(String)
 
     var errorDescription: String? {
@@ -25,7 +25,21 @@ enum SandboxError: LocalizedError {
         case .initImageMissing:
             return "Custom init image 'container-sandbox-init:latest' not found. Run 'make init-image' to build it."
         case .networkPolicyMismatch(let name, let existing, let requested):
-            return "Sandbox '\(name)' exists with policy '\(existing)' but '\(requested)' was requested. Run 'sandbox rm \(name)' to recreate."
+            var diffs: [String] = []
+            if existing.direction != requested.direction {
+                diffs.append("direction: \(existing.direction.rawValue) vs \(requested.direction.rawValue)")
+            }
+            if existing.allowedHosts != requested.allowedHosts {
+                diffs.append("allowed hosts differ")
+            }
+            if existing.blockedHosts != requested.blockedHosts {
+                diffs.append("blocked hosts differ")
+            }
+            if existing.blockedCIDRs != requested.blockedCIDRs {
+                diffs.append("blocked CIDRs differ")
+            }
+            let detail = diffs.isEmpty ? "policies differ" : diffs.joined(separator: ", ")
+            return "Sandbox '\(name)' has a different network policy (\(detail)). Run 'sandbox rm \(name)' to recreate."
         case .outdatedSandbox(let name):
             return "Sandbox '\(name)' was created with an older version. Run 'sandbox rm \(name)' and recreate it."
         }

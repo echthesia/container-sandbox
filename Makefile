@@ -40,8 +40,8 @@ uninstall:
 	rm -rf "$(STABLE_DIR)"
 
 init-image:
-	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o init-wrapper ./cmd/init-wrapper
-	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=arm64 go build -o proxy-bridge ./cmd/proxy-bridge
+	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o init-wrapper ./cmd/init-wrapper
+	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o proxy-bridge ./cmd/proxy-bridge
 	container build --tag $(INIT_IMAGE_TAG) \
 		--build-arg VMINIT_TAG=$$(container system property get image.init | sed 's/.*://') \
 		--file init-image/Containerfile init-image/

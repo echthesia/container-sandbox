@@ -66,6 +66,7 @@ extension AgentTemplate {
         env.reverse()
 
         var args = entrypoint
+        precondition(!args.isEmpty, "AgentTemplate.entrypoint must not be empty")
         if !extraArgs.isEmpty {
             args.append(contentsOf: extraArgs)
         }

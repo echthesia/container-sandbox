@@ -99,6 +99,46 @@ struct DomainFilterTests {
         #expect(!filter.isBlockedCIDR("1.1.1.1"))
     }
 
+    // MARK: - IPv6 CIDR blocking
+
+    @Test func ipv6LoopbackBlocked() {
+        let filter = DomainFilter(policy: .deny)
+        // ::1/128 — exact loopback
+        #expect(filter.isBlockedCIDR("::1"))
+        #expect(filter.isBlockedCIDR("0000:0000:0000:0000:0000:0000:0000:0001"))
+    }
+
+    @Test func ipv6UniqueLocalBlocked() {
+        let filter = DomainFilter(policy: .deny)
+        // fc00::/7 covers fc00:: through fdff::
+        #expect(filter.isBlockedCIDR("fc00::1"))
+        #expect(filter.isBlockedCIDR("fd00::1"))
+        #expect(filter.isBlockedCIDR("fdff:ffff:ffff:ffff:ffff:ffff:ffff:ffff"))
+    }
+
+    @Test func ipv6LinkLocalBlocked() {
+        let filter = DomainFilter(policy: .deny)
+        // fe80::/10 covers fe80:: through febf::
+        #expect(filter.isBlockedCIDR("fe80::1"))
+        #expect(filter.isBlockedCIDR("fe80::1234:5678"))
+        #expect(filter.isBlockedCIDR("febf:ffff:ffff:ffff:ffff:ffff:ffff:ffff"))
+        // fec0:: is outside fe80::/10 (first 10 bits differ)
+        #expect(!filter.isBlockedCIDR("fec0::1"))
+    }
+
+    @Test func ipv6PublicNotBlocked() {
+        let filter = DomainFilter(policy: .deny)
+        #expect(!filter.isBlockedCIDR("2001:db8::1"))
+        #expect(!filter.isBlockedCIDR("2607:f8b0:4004:800::200e"))
+    }
+
+    @Test func ipv6LoopbackDoesNotMatchWrongAddress() {
+        let filter = DomainFilter(policy: .deny)
+        // ::1/128 is exact — ::2 should NOT be blocked by that rule alone
+        // (but might be blocked by fc00::/7 or other rules — ::2 is not in any of them)
+        #expect(!filter.isBlockedCIDR("::2"))
+    }
+
     // MARK: - Edge cases
 
     @Test func emptyAllowlistDeniesAll() {

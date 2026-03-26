@@ -42,11 +42,12 @@ final class ProxyServer: Sendable {
             }
             .childChannelOption(.socketOption(.so_reuseaddr), value: 1)
 
+        // Restrict socket permissions after bind. The TOCTOU window between bind and chmod
+        // is microseconds, and the socket has a unique hash-based name in /tmp — acceptable
+        // tradeoff vs. umask which is process-global and unsafe in concurrent code.
         let channel = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
-        proxyLog.info("Proxy listening on \(socketPath)")
-
-        // Owner-only access — both proxy and framework run as the same user.
         chmod(socketPath, 0o600)
+        proxyLog.info("Proxy listening on \(socketPath)")
 
         try await channel.closeFuture.get()
     }
@@ -94,12 +95,9 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
         let decision = filter.evaluate(host: host, port: port)
         switch decision {
         case .allow:
-            if filter.isBlockedCIDR(host) {
-                proxyLog.warning("DENY (CIDR) CONNECT \(target)")
-                sendResponse(context: context, status: .forbidden, body: "Blocked by CIDR policy: \(target)\n")
-                return
-            }
             proxyLog.info("ALLOW CONNECT \(target)")
+            // CIDR check happens post-connect on the resolved IP (in establishTunnel)
+            // to catch both literal IPs and DNS rebinding to private addresses.
             establishTunnel(context: context, host: host, port: port)
         case .deny(let reason):
             proxyLog.info("DENY CONNECT \(target): \(reason)")
@@ -153,28 +151,26 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
         context.write(wrapOutboundOut(.head(head)), promise: nil)
         context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
 
-        // Remove HTTP handlers — switch to raw bytes.
+        // Remove HTTP handlers, then add relay handlers. Operations are chained
+        // so removals complete before relay handlers are added.
         let clientChannel = context.channel
-        context.pipeline.removeHandler(self, promise: nil)
+        let pipeline = clientChannel.pipeline
 
-        // Remove HTTP codec handlers too.
-        clientChannel.pipeline.handler(type: HTTPResponseEncoder.self).whenSuccess { encoder in
-            clientChannel.pipeline.removeHandler(encoder, promise: nil)
-        }
-        clientChannel.pipeline.handler(type: ByteToMessageHandler<HTTPRequestDecoder>.self).whenSuccess { decoder in
-            clientChannel.pipeline.removeHandler(decoder, promise: nil)
-        }
-
-        // Set up bidirectional relay.
-        let relay1 = ByteRelayHandler(partner: remoteChannel)
-        let relay2 = ByteRelayHandler(partner: clientChannel)
-
-        clientChannel.pipeline.addHandler(relay1).whenComplete { _ in
-            remoteChannel.pipeline.addHandler(relay2).whenComplete { _ in
-                // Start reading.
-                clientChannel.read()
-                remoteChannel.read()
-            }
+        pipeline.removeHandler(self).flatMap {
+            pipeline.handler(type: HTTPResponseEncoder.self)
+        }.flatMap { encoder in
+            pipeline.removeHandler(encoder)
+        }.flatMap {
+            pipeline.handler(type: ByteToMessageHandler<HTTPRequestDecoder>.self)
+        }.flatMap { decoder in
+            pipeline.removeHandler(decoder)
+        }.flatMap {
+            pipeline.addHandler(ByteRelayHandler(partner: remoteChannel))
+        }.flatMap { _ in
+            remoteChannel.pipeline.addHandler(ByteRelayHandler(partner: clientChannel))
+        }.whenComplete { _ in
+            clientChannel.read()
+            remoteChannel.read()
         }
     }
 

@@ -11,12 +11,16 @@ enum ProxyManager {
     static let proxyPort = 3128
 
     /// Environment variables that direct container traffic through the proxy.
+    /// Only HTTPS_PROXY is set — the proxy handles CONNECT (HTTPS tunneling) and
+    /// rejects plain HTTP. Both uppercase and lowercase variants are set for
+    /// compatibility (Go, wget, Python urllib check lowercase).
     static var proxyEnvironment: [(key: String, value: String)] {
         let url = "http://127.0.0.1:\(proxyPort)"
         return [
-            ("HTTP_PROXY", url),
             ("HTTPS_PROXY", url),
+            ("https_proxy", url),
             ("NO_PROXY", "localhost,127.0.0.1"),
+            ("no_proxy", "localhost,127.0.0.1"),
         ]
     }
 

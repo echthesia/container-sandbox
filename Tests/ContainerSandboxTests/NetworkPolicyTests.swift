@@ -85,7 +85,7 @@ struct NetworkPolicyTests {
     }
 
     @Test func labelRoundTrip() {
-        // Encode a policy to labels, then decode using the same logic as bootstrapIfNeeded.
+        // Encode a policy to labels, then decode via fromLabels() — the real code path.
         let original = NetworkPolicy.deny(
             allowedHosts: ["*.github.com", "api.example.com:443"],
             blockedHosts: ["evil.com"],
@@ -94,30 +94,13 @@ struct NetworkPolicyTests {
 
         // Simulate label encoding (same as SandboxManager.ensureSandboxExists).
         let labels: [String: String] = [
-            "sandbox.direction": original.direction.rawValue,
-            "sandbox.allowed-hosts": original.allowedHostsLabel,
-            "sandbox.blocked-hosts": original.blockedHostsLabel,
-            "sandbox.blocked-cidrs": original.blockedCIDRsLabel,
+            SandboxLabels.direction: original.direction.rawValue,
+            SandboxLabels.allowedHosts: original.allowedHostsLabel,
+            SandboxLabels.blockedHosts: original.blockedHostsLabel,
+            SandboxLabels.blockedCIDRs: original.blockedCIDRsLabel,
         ]
 
-        // Simulate label decoding (same as SandboxManager.bootstrapIfNeeded).
-        let direction = PolicyDirection(rawValue: labels["sandbox.direction"]!)!
-        let allowedHosts = labels["sandbox.allowed-hosts"]!
-            .split(separator: ",").map(String.init).filter { !$0.isEmpty }
-        let blockedHosts = labels["sandbox.blocked-hosts"]!
-            .split(separator: ",").map(String.init).filter { !$0.isEmpty }
-        let blockedCIDRsLabel = labels["sandbox.blocked-cidrs"]!
-        let blockedCIDRs = blockedCIDRsLabel.isEmpty
-            ? NetworkPolicy.defaultBlockedCIDRs
-            : blockedCIDRsLabel.split(separator: ",").map(String.init)
-
-        let decoded = NetworkPolicy(
-            direction: direction,
-            allowedHosts: allowedHosts,
-            blockedHosts: blockedHosts,
-            blockedCIDRs: blockedCIDRs
-        )
-
+        let decoded = NetworkPolicy.fromLabels(labels)
         #expect(decoded == original)
     }
 }
