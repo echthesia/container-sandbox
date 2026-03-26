@@ -9,7 +9,9 @@ STABLE_DIR = $(HOME)/.local/lib/container-sandbox
 CONTAINER_PREFIX = $(shell brew --prefix container 2>/dev/null)
 PLUGIN_DIR = $(CONTAINER_PREFIX)/libexec/container-plugins/$(PLUGIN_NAME)
 
-.PHONY: build install link uninstall clean
+INIT_IMAGE_TAG = container-sandbox-init:latest
+
+.PHONY: build install link uninstall clean init-image
 
 build:
 	swift build $(SWIFT_BUILD_FLAGS)
@@ -37,5 +39,13 @@ uninstall:
 	rm -f "$(PLUGIN_DIR)"
 	rm -rf "$(STABLE_DIR)"
 
+init-image:
+	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o init-wrapper ./cmd/init-wrapper
+	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o proxy-bridge ./cmd/proxy-bridge
+	container build --tag $(INIT_IMAGE_TAG) \
+		--build-arg VMINIT_TAG=$$(container system property get image.init | sed 's/.*://') \
+		--file init-image/Containerfile init-image/
+
 clean:
 	swift package clean
+	rm -f init-image/init-wrapper init-image/proxy-bridge

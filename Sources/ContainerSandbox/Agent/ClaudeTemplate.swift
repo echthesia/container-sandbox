@@ -25,6 +25,9 @@ struct ClaudeTemplate: AgentTemplate, Sendable {
     let requiresSSH = true
     let requiresVirtualization = false
     let useInit = true
+    let defaultNetworkPolicy = NetworkPolicy.deny(allowedHosts: [
+        "*.claude.ai",
+    ])
 
     let containerfileContent: String? = ##"""
     FROM docker.io/ubuntu:24.04

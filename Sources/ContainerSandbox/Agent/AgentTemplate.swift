@@ -14,10 +14,12 @@ protocol AgentTemplate: Sendable {
     var requiresSSH: Bool { get }
     var requiresVirtualization: Bool { get }
     var useInit: Bool { get }
+    var defaultNetworkPolicy: NetworkPolicy { get }
 }
 
 extension AgentTemplate {
     var containerfileContent: String? { nil }
+    var defaultNetworkPolicy: NetworkPolicy { .allow }
 }
 
 extension AgentTemplate {
@@ -48,6 +50,10 @@ extension AgentTemplate {
         for (key, value) in extraEnv {
             envMap.append((key, value))
         }
+        // Proxy is always running on every sandbox.
+        for entry in ProxyManager.proxyEnvironment {
+            envMap.append(entry)
+        }
 
         // Deduplicate: keep last occurrence of each key
         var seen = Set<String>()
@@ -60,6 +66,7 @@ extension AgentTemplate {
         env.reverse()
 
         var args = entrypoint
+        precondition(!args.isEmpty, "AgentTemplate.entrypoint must not be empty")
         if !extraArgs.isEmpty {
             args.append(contentsOf: extraArgs)
         }

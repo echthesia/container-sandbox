@@ -1,0 +1,6 @@
+ARG VMINIT_TAG=latest
+FROM ghcr.io/apple/containerization/vminit:${VMINIT_TAG} AS base
+FROM ghcr.io/apple/containerization/vminit:${VMINIT_TAG}
+COPY --from=base /sbin/vminitd /sbin/vminitd.real
+COPY init-wrapper /sbin/vminitd
+COPY proxy-bridge /sbin/proxy-bridge
