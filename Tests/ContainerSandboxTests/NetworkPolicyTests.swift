@@ -2,9 +2,7 @@ import Foundation
 @testable import sandbox
 import Testing
 
-@Suite("NetworkPolicy")
 struct NetworkPolicyTests {
-
     @Test func allowPolicyDefaults() {
         let policy = NetworkPolicy.allow
         #expect(policy.direction == .allow)
@@ -50,27 +48,25 @@ struct NetworkPolicyTests {
     }
 
     @Test func resolveNetworkPolicyDefaultsToTemplate() throws {
-        let template = ClaudeTemplate()
-        let policy = try RunCommand.resolveNetworkPolicy(
-            template: template, policy: nil, allowHost: [], blockHost: []
-        )
+        let options = try NetworkPolicyOptions.parse([])
+        let policy = options.resolve(template: ClaudeTemplate())
         #expect(policy.direction == .deny)
         #expect(policy.allowedHosts.contains("*.anthropic.com"))
     }
 
     @Test func resolveNetworkPolicyOverridesDirection() throws {
-        let template = ClaudeTemplate()
-        let policy = try RunCommand.resolveNetworkPolicy(
-            template: template, policy: "allow", allowHost: [], blockHost: []
-        )
+        let options = try NetworkPolicyOptions.parse(["--policy", "allow"])
+        let policy = options.resolve(template: ClaudeTemplate())
         #expect(policy.direction == .allow)
+        // Changing direction preserves template's allowed hosts
+        #expect(policy.allowedHosts.contains("*.claude.ai"))
     }
 
     @Test func resolveNetworkPolicyAppendsHosts() throws {
-        let template = ClaudeTemplate()
-        let policy = try RunCommand.resolveNetworkPolicy(
-            template: template, policy: nil, allowHost: ["*.github.com"], blockHost: ["evil.com"]
-        )
+        let options = try NetworkPolicyOptions.parse([
+            "--allow-host", "*.github.com", "--block-host", "evil.com",
+        ])
+        let policy = options.resolve(template: ClaudeTemplate())
         #expect(policy.allowedHosts.contains("*.anthropic.com"))
         #expect(policy.allowedHosts.contains("*.github.com"))
         #expect(policy.blockedHosts.contains("evil.com"))
@@ -78,9 +74,7 @@ struct NetworkPolicyTests {
 
     @Test func resolveNetworkPolicyRejectsInvalidDirection() {
         #expect(throws: (any Error).self) {
-            try RunCommand.resolveNetworkPolicy(
-                template: ClaudeTemplate(), policy: "yolo", allowHost: [], blockHost: []
-            )
+            try NetworkPolicyOptions.parse(["--policy", "yolo"])
         }
     }
 

@@ -1,9 +1,7 @@
 @testable import sandbox
 import Testing
 
-@Suite("DomainFilter")
 struct DomainFilterTests {
-
     // MARK: - Deny mode (block by default, allow listed)
 
     @Test func denyModeBlocksUnlisted() {
@@ -137,6 +135,33 @@ struct DomainFilterTests {
         // ::1/128 is exact — ::2 should NOT be blocked by that rule alone
         // (but might be blocked by fc00::/7 or other rules — ::2 is not in any of them)
         #expect(!filter.isBlockedCIDR("::2"))
+    }
+
+    // MARK: - IPv4-mapped IPv6
+
+    @Test func ipv4MappedIPv6LoopbackBlocked() {
+        let filter = DomainFilter(policy: .deny)
+        // ::ffff:127.0.0.1 maps to 127.0.0.1, blocked by 127.0.0.0/8
+        #expect(filter.isBlockedCIDR("::ffff:127.0.0.1"))
+    }
+
+    @Test func ipv4MappedIPv6PrivateBlocked() {
+        let filter = DomainFilter(policy: .deny)
+        #expect(filter.isBlockedCIDR("::ffff:10.0.0.5"))
+        #expect(filter.isBlockedCIDR("::ffff:192.168.1.1"))
+        #expect(filter.isBlockedCIDR("::ffff:172.16.0.1"))
+    }
+
+    @Test func ipv4MappedIPv6PublicNotBlocked() {
+        let filter = DomainFilter(policy: .deny)
+        #expect(!filter.isBlockedCIDR("::ffff:8.8.8.8"))
+        #expect(!filter.isBlockedCIDR("::ffff:1.1.1.1"))
+    }
+
+    @Test func ipv4MappedIPv6HexFormBlocked() {
+        let filter = DomainFilter(policy: .deny)
+        // ::ffff:7f00:1 is the pure-hex form of ::ffff:127.0.0.1
+        #expect(filter.isBlockedCIDR("::ffff:7f00:1"))
     }
 
     // MARK: - Edge cases

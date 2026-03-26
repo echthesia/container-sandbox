@@ -1,6 +1,6 @@
 import ContainerAPIClient
-import ContainerResource
 import ContainerizationOCI
+import ContainerResource
 import Foundation
 import Logging
 
@@ -11,6 +11,7 @@ enum SandboxLabels {
     static let managed = "sandbox.managed"
     static let agent = "sandbox.agent"
     static let workspace = "sandbox.workspace"
+    static let extraWorkspaces = "sandbox.extra-workspaces"
     static let direction = "sandbox.direction"
     static let allowedHosts = "sandbox.allowed-hosts"
     static let blockedHosts = "sandbox.blocked-hosts"
@@ -18,11 +19,11 @@ enum SandboxLabels {
 }
 
 /// Manages sandbox lifecycle using the ContainerClient API.
-struct SandboxManager: Sendable {
+struct SandboxManager {
     let client: ContainerClient
 
     init() {
-        self.client = ContainerClient()
+        client = ContainerClient()
     }
 
     // MARK: - Listing
@@ -96,7 +97,8 @@ struct SandboxManager: Sendable {
         template: any AgentTemplate,
         workspace: String,
         extraWorkspaces: [String] = [],
-        networkPolicy: NetworkPolicy = .allow
+        networkPolicy: NetworkPolicy = .allow,
+        nameOverride: String? = nil
     ) async throws -> (name: String, snapshot: ContainerSnapshot) {
         let resolvedWorkspace = Self.resolveWorkspacePath(workspace)
 
@@ -104,7 +106,7 @@ struct SandboxManager: Sendable {
             throw SandboxError.workspaceNotFound(resolvedWorkspace)
         }
 
-        let name = SandboxNaming.sandboxName(agent: template.name, workspacePath: resolvedWorkspace)
+        let name = nameOverride ?? SandboxNaming.sandboxName(agent: template.name, workspacePath: resolvedWorkspace)
 
         if let existing = try await getSandbox(name: name) {
             // Verify the existing sandbox's network policy matches what was requested.
@@ -118,6 +120,12 @@ struct SandboxManager: Sendable {
                     requested: networkPolicy
                 )
             }
+            // Verify extra workspace mounts match.
+            let requestedLabel = Self.extraWorkspacesLabel(extraWorkspaces)
+            let existingLabel = existing.configuration.labels[SandboxLabels.extraWorkspaces] ?? ""
+            if existingLabel != requestedLabel {
+                throw SandboxError.extraWorkspaceMismatch(name: name)
+            }
             return (name, existing)
         }
 
@@ -125,10 +133,11 @@ struct SandboxManager: Sendable {
 
         try await buildImageIfNeeded(template: template)
 
+        // Kernel fetch is independent of image setup — overlap them.
+        async let kernel = ClientKernel.getDefaultKernel(for: .current)
+
         let img = try await ClientImage.fetch(reference: template.defaultImage, platform: platform)
         try await img.getCreateSnapshot(platform: platform)
-
-        let kernel = try await ClientKernel.getDefaultKernel(for: .current)
 
         let imageConfig = try await img.config(for: platform).config
 
@@ -163,7 +172,7 @@ struct SandboxManager: Sendable {
 
         // Always start proxy and mount its UDS into the VM.
         // The framework auto-detects socket mounts and relays via vsock (.into direction).
-        let socketPath = try ProxyManager.startIfNeeded(name: name, policy: networkPolicy)
+        let socketPath = try await ProxyManager.startIfNeeded(name: name, policy: networkPolicy)
         config.mounts.append(
             .virtiofs(source: socketPath, destination: "/run/proxy.sock", options: [])
         )
@@ -172,6 +181,7 @@ struct SandboxManager: Sendable {
             SandboxLabels.managed: "true",
             SandboxLabels.agent: template.name,
             SandboxLabels.workspace: resolvedWorkspace,
+            SandboxLabels.extraWorkspaces: Self.extraWorkspacesLabel(extraWorkspaces),
             SandboxLabels.direction: networkPolicy.direction.rawValue,
             SandboxLabels.allowedHosts: networkPolicy.allowedHostsLabel,
             SandboxLabels.blockedHosts: networkPolicy.blockedHostsLabel,
@@ -192,7 +202,7 @@ struct SandboxManager: Sendable {
         let customInit = try await ClientImage.fetch(reference: customInitRef, platform: .current)
         try await customInit.getCreateSnapshot(platform: .current)
 
-        try await client.create(configuration: config, options: .default, kernel: kernel, initImage: customInitRef)
+        try await client.create(configuration: config, options: .default, kernel: await kernel, initImage: customInitRef)
 
         let snapshot = try await client.get(id: name)
         return (name, snapshot)
@@ -200,16 +210,14 @@ struct SandboxManager: Sendable {
 
     // MARK: - Lifecycle
 
-    func bootstrapIfNeeded(name: String) async throws {
-        let snapshot = try await client.get(id: name)
-
+    func bootstrapIfNeeded(name: String, snapshot: ContainerSnapshot) async throws {
         // Detect old-format sandboxes missing the direction label.
         guard let policy = NetworkPolicy.fromLabels(snapshot.configuration.labels) else {
             throw SandboxError.outdatedSandbox(name)
         }
 
         // Always ensure proxy is running with current policy from labels.
-        try ProxyManager.startIfNeeded(name: name, policy: policy)
+        try await ProxyManager.startIfNeeded(name: name, policy: policy)
 
         if snapshot.status == .running {
             return
@@ -280,6 +288,45 @@ struct SandboxManager: Sendable {
     }
 
     // MARK: - Utilities
+
+    /// Build a canonical label value for extra workspaces.
+    /// Resolves paths, sorts, and joins so reuse checks are order-independent.
+    static func extraWorkspacesLabel(_ extras: [String]) -> String {
+        extras.map { input in
+            let (path, readOnly) = parseWorkspacePath(input)
+            let resolved = resolveWorkspacePath(path)
+            return readOnly ? "\(resolved):ro" : resolved
+        }.sorted().joined(separator: ",")
+    }
+
+    /// Build an exec environment from a container's init config with last-writer-wins dedup.
+    /// Layers: base env < extras < TERM < proxy vars.
+    static func execEnvironment(base: [String], extras: [String] = []) -> [String] {
+        var envMap: [(key: String, value: String)] = []
+        for entry in base {
+            if let (k, v) = parseEnvEntry(entry) {
+                envMap.append((k, v))
+            }
+        }
+        envMap.append(("TERM", "xterm-256color"))
+        for entry in extras {
+            if let (k, v) = parseEnvEntry(entry) {
+                envMap.append((k, v))
+            }
+        }
+        for entry in ProxyManager.proxyEnvironment {
+            envMap.append(entry)
+        }
+        var seen = Set<String>()
+        var env: [String] = []
+        for (key, value) in envMap.reversed() {
+            if seen.insert(key).inserted {
+                env.append("\(key)=\(value)")
+            }
+        }
+        env.reverse()
+        return env
+    }
 
     static func resolveWorkspacePath(_ path: String) -> String {
         URL(fileURLWithPath: path, relativeTo: URL(fileURLWithPath: FileManager.default.currentDirectoryPath)).standardized.path

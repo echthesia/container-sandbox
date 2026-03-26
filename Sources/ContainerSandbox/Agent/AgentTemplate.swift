@@ -18,8 +18,13 @@ protocol AgentTemplate: Sendable {
 }
 
 extension AgentTemplate {
-    var containerfileContent: String? { nil }
-    var defaultNetworkPolicy: NetworkPolicy { .allow }
+    var containerfileContent: String? {
+        nil
+    }
+
+    var defaultNetworkPolicy: NetworkPolicy {
+        .allow
+    }
 }
 
 extension AgentTemplate {
@@ -36,8 +41,9 @@ extension AgentTemplate {
         var envMap: [(key: String, value: String)] = []
 
         for entry in baseConfig.environment {
-            let (k, v) = Self.splitEnvEntry(entry)
-            envMap.append((k, v))
+            if let (k, v) = parseEnvEntry(entry) {
+                envMap.append((k, v))
+            }
         }
         for (key, value) in defaultEnvironment {
             envMap.append((key, value))
@@ -79,14 +85,6 @@ extension AgentTemplate {
             terminal: true,
             user: baseConfig.user
         )
-    }
-
-    private static func splitEnvEntry(_ entry: String) -> (key: String, value: String) {
-        let parts = entry.split(separator: "=", maxSplits: 1)
-        if parts.count == 2 {
-            return (String(parts[0]), String(parts[1]))
-        }
-        return (entry, "")
     }
 }
 

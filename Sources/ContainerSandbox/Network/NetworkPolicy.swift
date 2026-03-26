@@ -1,7 +1,7 @@
 import Foundation
 
 /// Policy direction: allow-by-default (blocklist) or deny-by-default (allowlist).
-enum PolicyDirection: String, Sendable, Codable {
+enum PolicyDirection: String, Codable {
     /// Block all traffic except explicitly allowed hosts.
     case deny
     /// Allow all traffic except explicitly blocked hosts (+ always block private CIDRs).
@@ -10,7 +10,7 @@ enum PolicyDirection: String, Sendable, Codable {
 
 /// Network policy configuration for a sandbox.
 /// Every sandbox runs a filtering proxy; the policy controls what traffic is permitted.
-struct NetworkPolicy: Sendable, Equatable, Codable {
+struct NetworkPolicy: Codable {
     var direction: PolicyDirection
     var allowedHosts: [String]
     var blockedHosts: [String]
@@ -66,6 +66,21 @@ struct NetworkPolicy: Sendable, Equatable, Codable {
     }
 }
 
+// MARK: - Equatable (order/case/duplicate-insensitive for host lists)
+
+extension NetworkPolicy: Equatable {
+    static func == (lhs: NetworkPolicy, rhs: NetworkPolicy) -> Bool {
+        lhs.direction == rhs.direction
+            && normalizedSet(lhs.allowedHosts) == normalizedSet(rhs.allowedHosts)
+            && normalizedSet(lhs.blockedHosts) == normalizedSet(rhs.blockedHosts)
+            && Set(lhs.blockedCIDRs) == Set(rhs.blockedCIDRs)
+    }
+
+    private static func normalizedSet(_ hosts: [String]) -> Set<String> {
+        Set(hosts.map { $0.lowercased() })
+    }
+}
+
 // MARK: - Label serialization
 
 extension NetworkPolicy {
@@ -87,7 +102,8 @@ extension NetworkPolicy {
     /// Decode a NetworkPolicy from container labels. Returns nil if the direction label is missing.
     static func fromLabels(_ labels: [String: String]) -> NetworkPolicy? {
         guard let dirRaw = labels[SandboxLabels.direction],
-              let direction = PolicyDirection(rawValue: dirRaw) else {
+              let direction = PolicyDirection(rawValue: dirRaw)
+        else {
             return nil
         }
         let allowedHosts = (labels[SandboxLabels.allowedHosts] ?? "")

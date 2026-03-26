@@ -8,6 +8,7 @@ enum SandboxError: LocalizedError {
     case proxyStartFailed(String)
     case initImageMissing
     case networkPolicyMismatch(name: String, existing: NetworkPolicy, requested: NetworkPolicy)
+    case extraWorkspaceMismatch(name: String)
     case outdatedSandbox(String)
 
     var errorDescription: String? {
@@ -42,6 +43,8 @@ enum SandboxError: LocalizedError {
                 let detail = diffs.isEmpty ? "policies differ" : diffs.joined(separator: ", ")
                 return "Sandbox '\(name)' has a different network policy (\(detail)). Run 'sandbox rm \(name)' to recreate."
             }()
+        case let .extraWorkspaceMismatch(name):
+            "Sandbox '\(name)' has different extra workspace mounts. Run 'sandbox rm \(name)' to recreate."
         case let .outdatedSandbox(name):
             "Sandbox '\(name)' was created with an older version. Run 'sandbox rm \(name)' and recreate it."
         }

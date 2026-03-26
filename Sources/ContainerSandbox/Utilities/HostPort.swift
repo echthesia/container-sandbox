@@ -1,3 +1,11 @@
+/// Split a "KEY=VALUE" string into its components.
+/// Returns nil if no `=` is present.
+func parseEnvEntry(_ entry: String) -> (key: String, value: String)? {
+    let parts = entry.split(separator: "=", maxSplits: 1)
+    guard parts.count == 2 else { return nil }
+    return (String(parts[0]), String(parts[1]))
+}
+
 /// Parse a "host:port" string into its components.
 ///
 /// Handles IPv6 brackets (`[::1]:443`), plain `host:port`, and bare hostnames.
@@ -5,7 +13,7 @@
 func parseHostPort(_ input: String) -> (host: String, port: Int?) {
     // Handle IPv6 in brackets: [::1]:443
     if input.hasPrefix("["), let bracketEnd = input.firstIndex(of: "]") {
-        let host = String(input[input.index(after: input.startIndex)..<bracketEnd])
+        let host = String(input[input.index(after: input.startIndex) ..< bracketEnd])
         let afterBracket = input[input.index(after: bracketEnd)...]
         if afterBracket.hasPrefix(":"), let port = Int(afterBracket.dropFirst()) {
             return (host, port)

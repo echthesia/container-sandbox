@@ -1,10 +1,10 @@
 import Foundation
 
 /// Evaluates whether a host:port is allowed or denied by a network policy.
-struct DomainFilter: Sendable {
+struct DomainFilter {
     let policy: NetworkPolicy
 
-    enum Decision: Equatable, Sendable {
+    enum Decision: Equatable {
         case allow
         case deny(reason: String)
     }
@@ -33,10 +33,22 @@ struct DomainFilter: Sendable {
     }
 
     /// Check whether a resolved IP address falls within any blocked CIDR range.
+    /// Also detects IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) and checks
+    /// the embedded IPv4 against IPv4 CIDRs.
     func isBlockedCIDR(_ ip: String) -> Bool {
         for cidr in policy.blockedCIDRs {
             if cidrContains(cidr, address: ip) {
                 return true
+            }
+        }
+        // If the address is an IPv4-mapped IPv6 literal, also check the
+        // embedded IPv4 against all CIDRs (catches e.g. ::ffff:10.0.0.5
+        // against 10.0.0.0/8).
+        if let v4 = extractMappedIPv4(ip) {
+            for cidr in policy.blockedCIDRs {
+                if cidrContains(cidr, address: v4) {
+                    return true
+                }
             }
         }
         return false
@@ -63,7 +75,7 @@ extension DomainFilter {
     }
 
     private func matches(host: String, port: Int, pattern: String) -> Bool {
-        let (patternHost, patternPort) = parsePattern(pattern)
+        let (patternHost, patternPort) = parseHostPort(pattern)
 
         // If pattern specifies a port, it must match.
         if let pp = patternPort, pp != port {
@@ -83,18 +95,21 @@ extension DomainFilter {
 
         return false
     }
-
-    /// Split "host:port" or "host" into components.
-    /// Delegates to the shared parseHostPort utility.
-    private func parsePattern(_ pattern: String) -> (host: String, port: Int?) {
-        parseHostPort(pattern)
-    }
 }
 
-// MARK: - CIDR matching
+// MARK: - CIDR matching (uses POSIX inet_pton for robust address parsing)
 
 extension DomainFilter {
-    /// Check if an IPv4 address is within a CIDR range.
+    /// Check whether an address is an IPv4-mapped IPv6 address (::ffff:x.x.x.x)
+    /// and return the embedded IPv4 string if so.
+    private func extractMappedIPv4(_ ip: String) -> String? {
+        guard let bytes = parseIPv6(ip) else { return nil }
+        // IPv4-mapped: first 10 bytes zero, bytes 10-11 are 0xff.
+        guard bytes[0 ..< 10].allSatisfy({ $0 == 0 }),
+              bytes[10] == 0xFF, bytes[11] == 0xFF else { return nil }
+        return "\(bytes[12]).\(bytes[13]).\(bytes[14]).\(bytes[15])"
+    }
+
     private func cidrContains(_ cidr: String, address: String) -> Bool {
         let parts = cidr.split(separator: "/")
         guard parts.count == 2 else { return false }
@@ -103,14 +118,14 @@ extension DomainFilter {
         guard let prefixLen = Int(parts[1]) else { return false }
 
         // IPv4
-        if let netAddr = ipv4ToUInt32(network), let addr = ipv4ToUInt32(address) {
+        if let netAddr = parseIPv4(network), let addr = parseIPv4(address) {
             guard prefixLen >= 0, prefixLen <= 32 else { return false }
             let mask: UInt32 = prefixLen == 0 ? 0 : ~UInt32(0) << (32 - prefixLen)
             return (netAddr & mask) == (addr & mask)
         }
 
-        // IPv6 — simple prefix comparison on expanded form.
-        if let netBytes = ipv6ToBytes(network), let addrBytes = ipv6ToBytes(address) {
+        // IPv6
+        if let netBytes = parseIPv6(network), let addrBytes = parseIPv6(address) {
             guard prefixLen >= 0, prefixLen <= 128 else { return false }
             return prefixMatch(netBytes, addrBytes, bits: prefixLen)
         }
@@ -118,48 +133,28 @@ extension DomainFilter {
         return false
     }
 
-    private func ipv4ToUInt32(_ addr: String) -> UInt32? {
-        let octets = addr.split(separator: ".").compactMap { UInt8($0) }
-        guard octets.count == 4 else { return nil }
-        return UInt32(octets[0]) << 24 | UInt32(octets[1]) << 16 | UInt32(octets[2]) << 8 | UInt32(octets[3])
+    /// Parse an IPv4 address using inet_pton. Returns the address as a
+    /// host-byte-order UInt32 (high byte = first octet), or nil on failure.
+    private func parseIPv4(_ addr: String) -> UInt32? {
+        var sa = in_addr()
+        guard inet_pton(AF_INET, addr, &sa) == 1 else { return nil }
+        return UInt32(bigEndian: sa.s_addr)
     }
 
-    private func ipv6ToBytes(_ addr: String) -> [UInt8]? {
-        // Reject addresses with more than one :: (e.g. "1::2::3").
-        if addr.components(separatedBy: "::").count > 2 { return nil }
-
-        var groups = addr.split(separator: ":", omittingEmptySubsequences: false).map(String.init)
-
-        // Expand :: shorthand.
-        if let emptyIdx = groups.firstIndex(of: "") {
-            // Handle leading/trailing :: producing extra empty strings.
-            let nonEmpty = groups.filter { !$0.isEmpty }
-            let missing = 8 - nonEmpty.count
-            guard missing >= 0 else { return nil }
-            groups.remove(at: emptyIdx)
-            for _ in 0..<missing {
-                groups.insert("0", at: emptyIdx)
-            }
-            // Remove any remaining empty strings from leading/trailing ::
-            groups = groups.filter { !$0.isEmpty }
-        }
-
-        guard groups.count == 8 else { return nil }
-        var bytes = [UInt8]()
-        bytes.reserveCapacity(16)
-        for group in groups {
-            guard let val = UInt16(group, radix: 16) else { return nil }
-            bytes.append(UInt8(val >> 8))
-            bytes.append(UInt8(val & 0xFF))
-        }
-        return bytes
+    /// Parse an IPv6 address using inet_pton. Returns the 16-byte
+    /// network-order representation, or nil on failure. Handles all
+    /// standard forms: compressed (::), mapped (::ffff:a.b.c.d), etc.
+    private func parseIPv6(_ addr: String) -> [UInt8]? {
+        var sa6 = in6_addr()
+        guard inet_pton(AF_INET6, addr, &sa6) == 1 else { return nil }
+        return withUnsafeBytes(of: sa6) { Array($0) }
     }
 
     private func prefixMatch(_ a: [UInt8], _ b: [UInt8], bits: Int) -> Bool {
         let fullBytes = bits / 8
         let remainingBits = bits % 8
 
-        for i in 0..<fullBytes {
+        for i in 0 ..< fullBytes {
             if a[i] != b[i] { return false }
         }
 

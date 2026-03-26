@@ -44,7 +44,7 @@ enum ProxyManager {
 
     /// Start the proxy if not already running. Returns the socket path.
     @discardableResult
-    static func startIfNeeded(name: String, policy: NetworkPolicy) throws -> String {
+    static func startIfNeeded(name: String, policy: NetworkPolicy) async throws -> String {
         let socket = socketPath(for: name)
 
         // Check if already running.
@@ -82,9 +82,9 @@ enum ProxyManager {
         try saveState(state, for: name)
 
         // Wait briefly for the socket to appear.
-        for _ in 0..<20 {
+        for _ in 0 ..< 20 {
             if FileManager.default.fileExists(atPath: socket) { return socket }
-            usleep(50_000) // 50ms
+            try await Task.sleep(for: .milliseconds(50))
         }
 
         // If the socket never appeared, the proxy failed to start.
@@ -127,4 +127,3 @@ enum ProxyManager {
         kill(pid, 0) == 0
     }
 }
-
