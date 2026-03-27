@@ -13,8 +13,12 @@ protocol ProxyStateStorage: Sendable {
     func ensureStateDirectory() throws
     func loadState(for name: String) throws -> ProxyState?
     func saveState(_ state: ProxyState, for name: String) throws
+    /// Remove runtime state (PID, lock, log) but preserve the policy config.
+    func removeRuntimeState(for name: String)
+    /// Remove all state including the persistent policy config.
     func removeAll(for name: String)
     func writePolicy(_ policy: NetworkPolicy, for name: String) throws -> String
+    func loadPolicy(for name: String) throws -> NetworkPolicy?
     func socketExists(path: String) -> Bool
     func removeSocket(path: String)
     func logPath(for name: String) -> URL
@@ -87,16 +91,23 @@ struct FileProxyStateStorage: ProxyStateStorage {
         try data.write(to: stateDir.appendingPathComponent("\(name).json"), options: .atomic)
     }
 
-    func removeAll(for name: String) {
-        let files = [
-            "\(name).json",
+    func removeRuntimeState(for name: String) {
+        let runtimeFiles = [
+            "\(name).json", // PID state
             "\(name).lock",
-            "\(name)-config.json",
             "\(name)-proxy.log",
         ]
-        for file in files {
+        for file in runtimeFiles {
             try? FileManager.default.removeItem(at: stateDir.appendingPathComponent(file))
         }
+    }
+
+    func removeAll(for name: String) {
+        removeRuntimeState(for: name)
+        // Also remove the persistent policy config.
+        try? FileManager.default.removeItem(
+            at: stateDir.appendingPathComponent("\(name)-config.json")
+        )
     }
 
     func writePolicy(_ policy: NetworkPolicy, for name: String) throws -> String {
@@ -104,6 +115,13 @@ struct FileProxyStateStorage: ProxyStateStorage {
         let data = try JSONEncoder().encode(policy)
         try data.write(to: configPath, options: .atomic)
         return configPath.path
+    }
+
+    func loadPolicy(for name: String) throws -> NetworkPolicy? {
+        let configPath = stateDir.appendingPathComponent("\(name)-config.json")
+        guard FileManager.default.fileExists(atPath: configPath.path) else { return nil }
+        let data = try Data(contentsOf: configPath)
+        return try JSONDecoder().decode(NetworkPolicy.self, from: data)
     }
 
     func socketExists(path: String) -> Bool {
@@ -121,7 +139,7 @@ struct FileProxyStateStorage: ProxyStateStorage {
     func acquireLock(for name: String) throws -> ProxyLockHandle {
         let lockPath = stateDir.appendingPathComponent("\(name).lock").path
         FileManager.default.createFile(atPath: lockPath, contents: nil)
-        let fd = open(lockPath, O_RDWR)
+        let fd = open(lockPath, O_RDWR | O_CLOEXEC)
         guard fd >= 0 else {
             throw SandboxError.proxyStartFailed("failed to open proxy lock file")
         }
@@ -188,10 +206,15 @@ struct ProxyManager {
         // Check if already running.
         if let state = try? stateStorage.loadState(for: name) {
             if launcher.isProcessAlive(pid: state.pid) && stateStorage.socketExists(path: state.socketPath) {
-                _ = try stateStorage.writePolicy(policy, for: name)
-                return state.socketPath
+                // If the policy hasn't changed, reuse the running proxy.
+                let existingPolicy = try? stateStorage.loadPolicy(for: name)
+                if existingPolicy == policy {
+                    return state.socketPath
+                }
+                // Policy changed — kill the old proxy and start a new one.
+                launcher.killProcess(pid: state.pid)
             }
-            // Stale state — clean up.
+            // Stale or killed — clean up.
             stateStorage.removeSocket(path: state.socketPath)
         }
 
@@ -223,7 +246,7 @@ struct ProxyManager {
         throw SandboxError.proxyStartFailed("proxy socket not created after 1s\(logHint)")
     }
 
-    /// Stop the proxy for a sandbox.
+    /// Stop the proxy for a sandbox, preserving the persistent policy config.
     func stop(name: String) {
         if let state = try? stateStorage.loadState(for: name) {
             if launcher.isProcessAlive(pid: state.pid) {
@@ -231,6 +254,6 @@ struct ProxyManager {
             }
             stateStorage.removeSocket(path: state.socketPath)
         }
-        stateStorage.removeAll(for: name)
+        stateStorage.removeRuntimeState(for: name)
     }
 }

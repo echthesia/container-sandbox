@@ -129,7 +129,6 @@ func makeManagedSnapshot(
     name: String,
     agent: String = "claude",
     workspace: String,
-    policy: NetworkPolicy = .allow,
     extraWorkspaces: String = "",
     status: RuntimeStatus = .stopped
 ) -> ContainerSnapshot {
@@ -138,10 +137,6 @@ func makeManagedSnapshot(
         SandboxLabels.agent: agent,
         SandboxLabels.workspace: workspace,
         SandboxLabels.extraWorkspaces: extraWorkspaces,
-        SandboxLabels.direction: policy.direction.rawValue,
-        SandboxLabels.allowedHosts: policy.allowedHostsLabel,
-        SandboxLabels.blockedHosts: policy.blockedHostsLabel,
-        SandboxLabels.blockedCIDRs: policy.blockedCIDRsLabel,
     ]
     return makeSnapshot(id: name, status: status, labels: labels)
 }

@@ -67,27 +67,6 @@ struct SandboxManagerLifecycleTests {
 
     // MARK: - ensureSandboxExists: label mismatch detection
 
-    @Test func mismatchedNetworkPolicyThrows() async throws {
-        let h = makeManager()
-
-        let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
-        let name = SandboxNaming.sandboxName(agent: "claude", workspacePath: resolvedWorkspace)
-
-        // Existing sandbox has allow policy
-        h.containers.snapshots[name] = makeManagedSnapshot(
-            name: name, agent: "claude", workspace: resolvedWorkspace, policy: .allow
-        )
-
-        // Request deny policy
-        await #expect(throws: SandboxError.self) {
-            try await h.manager.ensureSandboxExists(
-                template: ClaudeTemplate(),
-                workspace: testWorkspace,
-                networkPolicy: .deny
-            )
-        }
-    }
-
     @Test func mismatchedWorkspaceThrows() async throws {
         let h = makeManager()
 
@@ -96,8 +75,7 @@ struct SandboxManagerLifecycleTests {
 
         // Existing sandbox was created for a different workspace
         h.containers.snapshots[name] = makeManagedSnapshot(
-            name: name, agent: "claude", workspace: "/some/other/path",
-            policy: ClaudeTemplate().defaultNetworkPolicy
+            name: name, agent: "claude", workspace: "/some/other/path"
         )
 
         await #expect(throws: SandboxError.self) {
@@ -116,8 +94,7 @@ struct SandboxManagerLifecycleTests {
 
         // Existing sandbox has agent "shell" but we're requesting "claude"
         h.containers.snapshots[name] = makeManagedSnapshot(
-            name: name, agent: "shell", workspace: resolvedWorkspace,
-            policy: ClaudeTemplate().defaultNetworkPolicy
+            name: name, agent: "shell", workspace: resolvedWorkspace
         )
 
         await #expect(throws: SandboxError.self) {
@@ -128,26 +105,26 @@ struct SandboxManagerLifecycleTests {
         }
     }
 
-    @Test func outdatedSandboxMissingDirectionLabelThrows() async throws {
+    // MARK: - ensureSandboxExists: network policy is NOT validated on reuse
+
+    @Test func reuseSucceedsRegardlessOfNetworkPolicy() async throws {
         let h = makeManager()
 
         let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
-        let name = SandboxNaming.sandboxName(agent: "claude", workspacePath: resolvedWorkspace)
+        let name = SandboxNaming.sandboxName(agent: "shell", workspacePath: resolvedWorkspace)
 
-        // Sandbox exists but has no direction label (outdated format)
-        h.containers.snapshots[name] = makeSnapshot(id: name, status: .stopped, labels: [
-            SandboxLabels.managed: "true",
-            SandboxLabels.agent: "claude",
-            SandboxLabels.workspace: resolvedWorkspace,
-            // No direction label!
-        ])
+        // Create sandbox (writes .allow policy to state storage via startIfNeeded)
+        h.containers.snapshots[name] = makeManagedSnapshot(
+            name: name, agent: "shell", workspace: resolvedWorkspace
+        )
 
-        await #expect(throws: SandboxError.self) {
-            try await h.manager.ensureSandboxExists(
-                template: ClaudeTemplate(),
-                workspace: testWorkspace
-            )
-        }
+        // Reuse should succeed — no network policy validation on reuse
+        let (resultName, _) = try await h.manager.ensureSandboxExists(
+            template: ShellTemplate(),
+            workspace: testWorkspace
+        )
+        #expect(resultName == name)
+        #expect(h.containers.createdConfigs.isEmpty, "Should reuse, not create")
     }
 
     // MARK: - ensureSandboxExists: creation path
@@ -166,6 +143,42 @@ struct SandboxManagerLifecycleTests {
         let created = h.containers.createdConfigs[0]
         #expect(created.labels[SandboxLabels.managed] == "true")
         #expect(created.labels[SandboxLabels.agent] == "claude")
+    }
+
+    @Test func creationWritesPolicyToStateStorage() async throws {
+        let h = makeManager()
+
+        let (name, _) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        // ensureSandboxExists calls proxy.startIfNeeded which writes the template's
+        // default policy to state storage. This is the foundation of the policy
+        // persistence model — bootstrap reads from state storage, not labels.
+        let storedPolicy = try h.proxyStorage.loadPolicy(for: name)
+        #expect(storedPolicy == ClaudeTemplate().defaultNetworkPolicy,
+                "Creation must write template default policy to state storage")
+    }
+
+    @Test func creationDoesNotWriteNetworkLabels() async throws {
+        let h = makeManager()
+
+        _ = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        let created = h.containers.createdConfigs[0]
+        // Network policy lives in state storage, not container labels.
+        #expect(created.labels["sandbox.direction"] == nil,
+                "Network policy direction must not be stored in labels")
+        #expect(created.labels["sandbox.allowed-hosts"] == nil,
+                "Allowed hosts must not be stored in labels")
+        #expect(created.labels["sandbox.blocked-hosts"] == nil,
+                "Blocked hosts must not be stored in labels")
+        #expect(created.labels["sandbox.blocked-cidrs"] == nil,
+                "Blocked CIDRs must not be stored in labels")
     }
 
     @Test func creationBuildsImageIfMissing() async throws {
@@ -212,43 +225,75 @@ struct SandboxManagerLifecycleTests {
     @Test func bootstrapRunningContainerIsNoop() async throws {
         let h = makeManager()
 
-        let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
-        let snapshot = makeManagedSnapshot(
-            name: "test-sandbox", agent: "claude", workspace: resolvedWorkspace,
+        // Create the sandbox through the real path — this writes policy to state storage.
+        let (name, snapshot) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+        // Simulate it already running.
+        h.containers.snapshots[name] = makeManagedSnapshot(
+            name: name, agent: "claude",
+            workspace: SandboxManager.resolveWorkspacePath(testWorkspace),
             status: .running
         )
-        h.containers.snapshots["test-sandbox"] = snapshot
 
-        try await h.manager.bootstrapIfNeeded(name: "test-sandbox", snapshot: snapshot)
+        try await h.manager.bootstrapIfNeeded(name: name, snapshot: snapshot)
         #expect(h.containers.bootstrappedIds.isEmpty, "Should not bootstrap a running container")
     }
 
     @Test func bootstrapStoppedContainerBootstraps() async throws {
         let h = makeManager()
 
-        let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
-        let snapshot = makeManagedSnapshot(
-            name: "test-sandbox", agent: "claude", workspace: resolvedWorkspace,
-            status: .stopped
+        // Create through real path — writes policy to state storage.
+        let (name, snapshot) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
         )
-        h.containers.snapshots["test-sandbox"] = snapshot
 
-        try await h.manager.bootstrapIfNeeded(name: "test-sandbox", snapshot: snapshot)
-        #expect(h.containers.bootstrappedIds.contains("test-sandbox"))
+        try await h.manager.bootstrapIfNeeded(name: name, snapshot: snapshot)
+        #expect(h.containers.bootstrappedIds.contains(name))
     }
 
-    @Test func bootstrapOutdatedSandboxThrows() async throws {
+    @Test func bootstrapWithoutPolicyInStateStorageThrows() async throws {
         let h = makeManager()
 
-        // No direction label → outdated
-        let snapshot = makeSnapshot(id: "test-sandbox", status: .stopped, labels: [
-            SandboxLabels.managed: "true",
-        ])
+        // Sandbox exists but has no policy in state storage — represents an
+        // outdated sandbox or one whose state was lost.
+        let snapshot = makeManagedSnapshot(
+            name: "test-sandbox", agent: "claude",
+            workspace: SandboxManager.resolveWorkspacePath(testWorkspace),
+            status: .stopped
+        )
         h.containers.snapshots["test-sandbox"] = snapshot
 
         await #expect(throws: SandboxError.self) {
             try await h.manager.bootstrapIfNeeded(name: "test-sandbox", snapshot: snapshot)
         }
+    }
+
+    @Test func bootstrapReadsPolicyFromStateStorageNotLabels() async throws {
+        let h = makeManager()
+
+        // Create sandbox (writes template default policy to state storage).
+        let (name, _) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        // Mutate the policy in state storage (as `network proxy` would).
+        let mutatedPolicy = NetworkPolicy.allow
+        h.proxyStorage.writtenPolicies[name] = mutatedPolicy
+
+        let snapshot = try #require(h.containers.snapshots[name])
+
+        // Bootstrap should use the mutated policy from state storage.
+        try await h.manager.bootstrapIfNeeded(name: name, snapshot: snapshot)
+
+        // Verify startIfNeeded was called with the mutated policy (not template default).
+        // The written policy should be the mutated one, not the original template default.
+        let currentPolicy = try h.proxyStorage.loadPolicy(for: name)
+        #expect(currentPolicy == mutatedPolicy,
+                "Bootstrap should use the policy from state storage, not the original template default")
     }
 
     // MARK: - stopSandbox
@@ -270,6 +315,34 @@ struct SandboxManagerLifecycleTests {
         // Sessions should be cleared
         let remaining = try h.sessions.listSessions(containerId: "test-sandbox")
         #expect(remaining.isEmpty)
+    }
+
+    @Test func stopPreservesPolicyInStateStorage() async throws {
+        let h = makeManager()
+
+        // Create sandbox through real path — writes policy to state storage.
+        let (name, _) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        // Verify policy exists before stop.
+        let policyBeforeStop = try h.proxyStorage.loadPolicy(for: name)
+        #expect(policyBeforeStop != nil, "Policy should exist after creation")
+
+        // Mark as running so stop actually stops it.
+        h.containers.snapshots[name] = makeManagedSnapshot(
+            name: name, agent: "claude",
+            workspace: SandboxManager.resolveWorkspacePath(testWorkspace),
+            status: .running
+        )
+
+        try await h.manager.stopSandbox(name: name)
+
+        // Policy must survive stop — this is the core persistence contract.
+        let policyAfterStop = try h.proxyStorage.loadPolicy(for: name)
+        #expect(policyAfterStop == policyBeforeStop,
+                "stop must preserve policy in state storage for restart")
     }
 
     @Test func stopNonManagedSandboxThrows() async throws {
@@ -313,6 +386,26 @@ struct SandboxManagerLifecycleTests {
         #expect(h.containers.deletedIds.contains("test-sandbox"))
     }
 
+    @Test func deleteRemovesPolicyFromStateStorage() async throws {
+        let h = makeManager()
+
+        // Create sandbox — writes policy to state storage.
+        let (name, _) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        // Verify policy exists before delete.
+        #expect(try h.proxyStorage.loadPolicy(for: name) != nil)
+
+        try await h.manager.deleteSandbox(name: name)
+
+        // Delete must remove policy — sandbox is gone, no restart possible.
+        let policyAfterDelete = try h.proxyStorage.loadPolicy(for: name)
+        #expect(policyAfterDelete == nil,
+                "delete must remove policy from state storage")
+    }
+
     @Test func deleteStoppedContainerDeletesDirectly() async throws {
         let h = makeManager()
 
@@ -348,6 +441,35 @@ struct SandboxManagerLifecycleTests {
 
         let remaining = try h.sessions.listSessions(containerId: "gone")
         #expect(remaining.isEmpty)
+    }
+
+    // MARK: - Policy lifecycle: create → stop → bootstrap round-trip
+
+    @Test func policyPersistsAcrossStopAndBootstrap() async throws {
+        let h = makeManager()
+
+        // Create sandbox — writes template default policy.
+        let (name, _) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+        let originalPolicy = try #require(try h.proxyStorage.loadPolicy(for: name))
+
+        // Mark as running and stop it.
+        h.containers.snapshots[name] = makeManagedSnapshot(
+            name: name, agent: "claude",
+            workspace: SandboxManager.resolveWorkspacePath(testWorkspace),
+            status: .running
+        )
+        try await h.manager.stopSandbox(name: name)
+
+        // Policy must still be there after stop.
+        let afterStop = try #require(try h.proxyStorage.loadPolicy(for: name))
+        #expect(afterStop == originalPolicy)
+
+        // Bootstrap should succeed, reading the persisted policy.
+        let snapshot = try #require(h.containers.snapshots[name])
+        try await h.manager.bootstrapIfNeeded(name: name, snapshot: snapshot)
     }
 
     // MARK: - listSandboxes
@@ -496,43 +618,5 @@ struct SandboxManagerLifecycleTests {
         // BUG: Two mounts at the same destination with conflicting options
         // Correct behavior: should detect the duplicate and error or deduplicate
         #expect(duplicates.count <= 1, "Should not create conflicting mounts at the same destination")
-    }
-
-    // MARK: - Adversarial: CIDR notation breaks policy reuse
-
-    @Test func cidrNotationDifferenceBreaksPolicyReuse() async throws {
-        let h = makeManager()
-
-        let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
-        let name = SandboxNaming.sandboxName(agent: "shell", workspacePath: resolvedWorkspace)
-
-        // Existing sandbox has "10.0.0.0/8" in CIDRs
-        let existingPolicy = NetworkPolicy(
-            direction: .allow,
-            allowedHosts: NetworkPolicy.defaultAllowedHosts,
-            blockedHosts: [],
-            blockedCIDRs: ["10.0.0.0/8"]
-        )
-        h.containers.snapshots[name] = makeManagedSnapshot(
-            name: name, agent: "shell", workspace: resolvedWorkspace,
-            policy: existingPolicy
-        )
-
-        // Request with "10.0.0.0/08" — semantically identical but different string
-        let requestedPolicy = NetworkPolicy(
-            direction: .allow,
-            allowedHosts: NetworkPolicy.defaultAllowedHosts,
-            blockedHosts: [],
-            blockedCIDRs: ["10.0.0.0/08"]
-        )
-
-        // BUG: This throws networkPolicyMismatch because Set("10.0.0.0/8") != Set("10.0.0.0/08")
-        // Correct behavior: should recognize these as the same CIDR and reuse
-        let (resultName, _) = try await h.manager.ensureSandboxExists(
-            template: ShellTemplate(),
-            workspace: testWorkspace,
-            networkPolicy: requestedPolicy
-        )
-        #expect(resultName == name, "Should reuse sandbox with semantically equivalent CIDR")
     }
 }

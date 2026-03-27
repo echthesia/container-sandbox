@@ -10,10 +10,11 @@ struct ProxyManagerTests {
         let storage = FakeProxyStateStorage()
         let manager = ProxyManager(launcher: launcher, stateStorage: storage)
 
-        // Pre-populate state: proxy already running
+        // Pre-populate state: proxy already running with matching policy
         let existingState = ProxyState(pid: 42, socketPath: "/tmp/cs-proxy-existing.sock", sandboxName: "test")
         storage.states["test"] = existingState
         storage.sockets.insert("/tmp/cs-proxy-existing.sock")
+        storage.writtenPolicies["test"] = .allow
         launcher.alivePIDs.insert(42)
 
         let socket = try await manager.startIfNeeded(name: "test", policy: .allow)
@@ -76,6 +77,7 @@ struct ProxyManagerTests {
         let state = ProxyState(pid: 42, socketPath: "/tmp/cs-proxy-test.sock", sandboxName: "test")
         storage.states["test"] = state
         storage.sockets.insert("/tmp/cs-proxy-test.sock")
+        storage.writtenPolicies["test"] = .allow
         launcher.alivePIDs.insert(42)
 
         manager.stop(name: "test")
@@ -83,6 +85,9 @@ struct ProxyManagerTests {
         #expect(launcher.killedPIDs.contains(42))
         #expect(!storage.sockets.contains("/tmp/cs-proxy-test.sock"))
         #expect(storage.removedNames.contains("test"))
+        // Policy config must survive stop (persists across restart).
+        #expect(storage.writtenPolicies["test"] == .allow,
+                "stop() must preserve policy config for restart")
     }
 
     @Test func stopWithNoStateIsNoOp() {

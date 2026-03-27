@@ -57,14 +57,23 @@ final class FakeProxyStateStorage: ProxyStateStorage, @unchecked Sendable {
         }
     }
 
-    func removeAll(for name: String) {
+    func removeRuntimeState(for name: String) {
         states.removeValue(forKey: name)
         removedNames.append(name)
+    }
+
+    func removeAll(for name: String) {
+        removeRuntimeState(for: name)
+        writtenPolicies.removeValue(forKey: name)
     }
 
     func writePolicy(_ policy: NetworkPolicy, for name: String) throws -> String {
         writtenPolicies[name] = policy
         return "/fake/config/\(name).json"
+    }
+
+    func loadPolicy(for name: String) throws -> NetworkPolicy? {
+        writtenPolicies[name]
     }
 
     func socketExists(path: String) -> Bool {

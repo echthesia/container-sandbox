@@ -13,10 +13,6 @@ enum SandboxLabels {
     static let agent = "sandbox.agent"
     static let workspace = "sandbox.workspace"
     static let extraWorkspaces = "sandbox.extra-workspaces"
-    static let direction = "sandbox.direction"
-    static let allowedHosts = "sandbox.allowed-hosts"
-    static let blockedHosts = "sandbox.blocked-hosts"
-    static let blockedCIDRs = "sandbox.blocked-cidrs"
 }
 
 /// Manages sandbox lifecycle using injectable container, image, and kernel operations.
@@ -77,7 +73,6 @@ struct SandboxManager {
         template: any AgentTemplate,
         workspace: String,
         extraWorkspaces: [String] = [],
-        networkPolicy: NetworkPolicy = .allow,
         nameOverride: String? = nil
     ) async throws -> (name: String, snapshot: ContainerSnapshot) {
         let resolvedWorkspace = Self.resolveWorkspacePath(workspace)
@@ -91,17 +86,6 @@ struct SandboxManager {
         if let existing = try await getSandbox(name: name) {
             let labels = existing.configuration.labels
 
-            // Verify the existing sandbox's network policy matches what was requested.
-            guard let existingPolicy = NetworkPolicy.fromLabels(labels) else {
-                throw SandboxError.outdatedSandbox(name)
-            }
-            if existingPolicy != networkPolicy {
-                throw SandboxError.networkPolicyMismatch(
-                    name: name,
-                    existing: existingPolicy,
-                    requested: networkPolicy
-                )
-            }
             // Verify workspace matches.
             let existingWorkspace = labels[SandboxLabels.workspace] ?? ""
             if existingWorkspace != resolvedWorkspace {
@@ -171,7 +155,7 @@ struct SandboxManager {
 
         // Always start proxy and mount its UDS into the VM.
         // The framework auto-detects socket mounts and relays via vsock (.into direction).
-        let socketPath = try await proxy.startIfNeeded(name: name, policy: networkPolicy)
+        let socketPath = try await proxy.startIfNeeded(name: name, policy: template.defaultNetworkPolicy)
         config.mounts.append(
             .virtiofs(source: socketPath, destination: "/run/proxy.sock", options: [])
         )
@@ -181,10 +165,6 @@ struct SandboxManager {
             SandboxLabels.agent: template.name,
             SandboxLabels.workspace: resolvedWorkspace,
             SandboxLabels.extraWorkspaces: Self.extraWorkspacesLabel(extraWorkspaces),
-            SandboxLabels.direction: networkPolicy.direction.rawValue,
-            SandboxLabels.allowedHosts: networkPolicy.allowedHostsLabel,
-            SandboxLabels.blockedHosts: networkPolicy.blockedHostsLabel,
-            SandboxLabels.blockedCIDRs: networkPolicy.blockedCIDRsLabel,
         ]
 
         config.ssh = template.requiresSSH
@@ -208,13 +188,13 @@ struct SandboxManager {
 
     // MARK: - Lifecycle
 
-    func bootstrapIfNeeded(name: String, snapshot: ContainerSnapshot) async throws {
-        // Detect old-format sandboxes missing the direction label.
-        guard let policy = NetworkPolicy.fromLabels(snapshot.configuration.labels) else {
+    func bootstrapIfNeeded(name: String, snapshot _: ContainerSnapshot) async throws {
+        // Policy lives exclusively in proxy state storage.
+        guard let policy = try proxy.stateStorage.loadPolicy(for: name) else {
             throw SandboxError.outdatedSandbox(name)
         }
 
-        // Always ensure proxy is running with current policy from labels.
+        // Always ensure proxy is running with current policy.
         try await proxy.startIfNeeded(name: name, policy: policy)
 
         // Re-fetch status to avoid racing with another process that may have
@@ -298,6 +278,7 @@ struct SandboxManager {
         // Clean up host-side resources after container is gone.
         sessions.clearAll(for: name)
         proxy.stop(name: name)
+        proxy.stateStorage.removeAll(for: name)
     }
 
     func exportSandbox(name: String, to path: String) async throws {

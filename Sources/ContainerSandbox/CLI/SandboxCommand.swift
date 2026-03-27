@@ -16,6 +16,7 @@ struct SandboxCommand: AsyncParsableCommand {
             StopCommand.self,
             RemoveCommand.self,
             SaveCommand.self,
+            NetworkCommand.self,
             ProxyCommand.self,
         ],
         defaultSubcommand: RunCommand.self
@@ -40,38 +41,6 @@ struct SandboxCommand: AsyncParsableCommand {
     }
 }
 
-// MARK: - Shared option groups
-
-extension PolicyDirection: ExpressibleByArgument {}
-
-struct NetworkPolicyOptions: ParsableArguments {
-    @Option(name: .long, help: "Network policy: allow (default, blocklist) or deny (allowlist)")
-    var policy: PolicyDirection?
-
-    @Option(name: .long, help: "Allow a host (e.g., *.github.com)")
-    var allowHost: [String] = []
-
-    @Option(name: .long, help: "Block a host")
-    var blockHost: [String] = []
-
-    /// Resolve network policy from template defaults + CLI overrides.
-    /// Changes only the direction (preserving template-specific hosts),
-    /// then appends any extra allow/block hosts from the CLI.
-    func resolve(template: any AgentTemplate) -> NetworkPolicy {
-        var resolved = template.defaultNetworkPolicy
-        if let policy {
-            resolved.direction = policy
-        }
-        if !allowHost.isEmpty {
-            resolved.allowedHosts.append(contentsOf: allowHost)
-        }
-        if !blockHost.isEmpty {
-            resolved.blockedHosts.append(contentsOf: blockHost)
-        }
-        return resolved
-    }
-}
-
 // MARK: - Commands
 
 struct RunCommand: AsyncParsableCommand {
@@ -85,8 +54,6 @@ struct RunCommand: AsyncParsableCommand {
 
     @Option(name: [.short, .long], help: "Set environment variables (KEY=VALUE)")
     var env: [String] = []
-
-    @OptionGroup var networkOptions: NetworkPolicyOptions
 
     @Argument(help: "Agent name (e.g., claude, shell) or existing sandbox name")
     var agent: String
@@ -120,28 +87,46 @@ struct RunCommand: AsyncParsableCommand {
             }
             try await manager.bootstrapIfNeeded(name: agent, snapshot: snapshot)
             let initConfig = snapshot.configuration.initProcess
-            let config = ProcessConfiguration(
-                executable: "/bin/bash",
-                arguments: [],
-                environment: SandboxManager.execEnvironment(
-                    base: initConfig.environment,
-                    extras: env
-                ),
-                workingDirectory: snapshot.configuration.labels[SandboxLabels.workspace] ?? initConfig.workingDirectory,
-                terminal: true,
-                user: initConfig.user
+            let labels = snapshot.configuration.labels
+            let workDir = labels[SandboxLabels.workspace] ?? initConfig.workingDirectory
+
+            // Recover the original agent template so we relaunch its entrypoint,
+            // not a bare shell. Falls back to /bin/bash for unknown agents.
+            let extraEnv = Dictionary(
+                env.compactMap { parseEnvEntry($0) },
+                uniquingKeysWith: { _, last in last }
             )
+            let config: ProcessConfiguration
+            if let agentName = labels[SandboxLabels.agent],
+               let savedTemplate = AgentRegistry.resolve(agentName)
+            {
+                config = savedTemplate.processConfiguration(
+                    baseConfig: initConfig,
+                    workingDirectory: workDir,
+                    extraArgs: agentArgs,
+                    extraEnv: extraEnv
+                )
+            } else {
+                config = ProcessConfiguration(
+                    executable: "/bin/bash",
+                    arguments: [],
+                    environment: SandboxManager.execEnvironment(
+                        base: initConfig.environment,
+                        extras: env
+                    ),
+                    workingDirectory: workDir,
+                    terminal: true,
+                    user: initConfig.user
+                )
+            }
             let exitCode = try await manager.runTracked(name: agent, configuration: config)
             throw ExitCode(exitCode)
         }
-
-        let networkPolicy = networkOptions.resolve(template: template)
 
         let (sandboxName, snapshot) = try await manager.ensureSandboxExists(
             template: template,
             workspace: workspace,
             extraWorkspaces: extraWorkspaces,
-            networkPolicy: networkPolicy,
             nameOverride: name
         )
 
@@ -175,20 +160,15 @@ struct CreateCommand: AsyncParsableCommand {
     @Argument(help: "Workspace directory")
     var workspace: String = "."
 
-    @OptionGroup var networkOptions: NetworkPolicyOptions
-
     func run() async throws {
         guard let template = AgentRegistry.resolve(agent) else {
             throw SandboxError.unknownAgent(agent)
         }
 
-        let networkPolicy = networkOptions.resolve(template: template)
-
         let manager = SandboxManager()
         let (name, _) = try await manager.ensureSandboxExists(
             template: template,
-            workspace: workspace,
-            networkPolicy: networkPolicy
+            workspace: workspace
         )
         print(name)
     }
@@ -276,7 +256,7 @@ struct ListCommand: AsyncParsableCommand {
             for s in sandboxes {
                 let agent = s.configuration.labels[SandboxLabels.agent] ?? "?"
                 let workspace = s.configuration.labels[SandboxLabels.workspace] ?? "?"
-                let direction = s.configuration.labels[SandboxLabels.direction] ?? "?"
+                let direction = (try? manager.proxy.stateStorage.loadPolicy(for: s.id))?.direction.rawValue ?? "?"
                 print("\(pad(s.id, 40)) \(pad(agent, 10)) \(pad(s.status.rawValue, 10)) \(pad(direction, 10)) \(workspace)")
             }
         }
@@ -336,6 +316,136 @@ struct SaveCommand: AsyncParsableCommand {
         let manager = SandboxManager()
         try await manager.exportSandbox(name: sandboxName, to: output)
         print("Saved \(sandboxName) to \(output)")
+    }
+}
+
+// MARK: - Network management
+
+struct NetworkCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "network",
+        abstract: "Manage sandbox networking",
+        subcommands: [
+            NetworkProxyCommand.self,
+            NetworkLogCommand.self,
+        ]
+    )
+}
+
+extension PolicyDirection: ExpressibleByArgument {}
+
+struct NetworkProxyCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "proxy",
+        abstract: "Manage proxy configuration for a sandbox"
+    )
+
+    @Argument(help: "Sandbox name")
+    var sandboxName: String
+
+    @Option(name: .long, help: "Set the default policy")
+    var policy: PolicyDirection?
+
+    @Option(name: .long, help: "Permit access to a domain or IP")
+    var allowHost: [String] = []
+
+    @Option(name: .long, help: "Block access to a domain or IP")
+    var blockHost: [String] = []
+
+    func run() async throws {
+        let manager = SandboxManager()
+
+        // Validate sandbox exists and is managed.
+        guard let snapshot = try await manager.getSandbox(name: sandboxName) else {
+            throw SandboxError.sandboxNotFound(sandboxName)
+        }
+        guard snapshot.configuration.labels[SandboxLabels.managed] == "true" else {
+            throw SandboxError.notManagedSandbox(sandboxName)
+        }
+
+        let hasOverrides = policy != nil || !allowHost.isEmpty || !blockHost.isEmpty
+
+        if hasOverrides {
+            // Mutate: load current policy, apply overrides, persist.
+            let base = (try? manager.proxy.stateStorage.loadPolicy(for: sandboxName))
+                ?? AgentRegistry.resolve(
+                    snapshot.configuration.labels[SandboxLabels.agent] ?? ""
+                )?.defaultNetworkPolicy
+                ?? .allow
+
+            var updated = base
+            if let policy {
+                updated.direction = policy
+            }
+            if !allowHost.isEmpty {
+                updated.allowedHosts.append(contentsOf: allowHost)
+            }
+            if !blockHost.isEmpty {
+                updated.blockedHosts.append(contentsOf: blockHost)
+            }
+
+            try manager.proxy.stateStorage.ensureStateDirectory()
+            _ = try manager.proxy.stateStorage.writePolicy(updated, for: sandboxName)
+
+            // Restart proxy if sandbox is running.
+            if snapshot.status == .running {
+                try await manager.proxy.startIfNeeded(name: sandboxName, policy: updated)
+            }
+        } else {
+            // Display current policy.
+            guard let current = try manager.proxy.stateStorage.loadPolicy(for: sandboxName) else {
+                print("No network policy configured for '\(sandboxName)'.")
+                return
+            }
+            print("Policy: \(current.direction.rawValue)")
+            if !current.allowedHosts.isEmpty {
+                print("Allowed hosts:")
+                for host in current.allowedHosts {
+                    print("  \(host)")
+                }
+            }
+            if !current.blockedHosts.isEmpty {
+                print("Blocked hosts:")
+                for host in current.blockedHosts {
+                    print("  \(host)")
+                }
+            }
+            if !current.blockedCIDRs.isEmpty {
+                print("Blocked CIDRs:")
+                for cidr in current.blockedCIDRs {
+                    print("  \(cidr)")
+                }
+            }
+        }
+    }
+}
+
+struct NetworkLogCommand: AsyncParsableCommand {
+    static let configuration = CommandConfiguration(
+        commandName: "log",
+        abstract: "Show network logs"
+    )
+
+    @Argument(help: "Sandbox name")
+    var sandboxName: String
+
+    func run() async throws {
+        let manager = SandboxManager()
+
+        guard let snapshot = try await manager.getSandbox(name: sandboxName) else {
+            throw SandboxError.sandboxNotFound(sandboxName)
+        }
+        guard snapshot.configuration.labels[SandboxLabels.managed] == "true" else {
+            throw SandboxError.notManagedSandbox(sandboxName)
+        }
+
+        let logPath = manager.proxy.stateStorage.logPath(for: sandboxName)
+        guard FileManager.default.fileExists(atPath: logPath.path) else {
+            print("No proxy logs found for '\(sandboxName)'.")
+            return
+        }
+        let contents = try String(contentsOf: logPath, encoding: .utf8)
+        print(contents, terminator: "")
     }
 }
 
