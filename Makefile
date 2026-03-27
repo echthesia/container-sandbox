@@ -11,7 +11,7 @@ PLUGIN_DIR = $(CONTAINER_PREFIX)/libexec/container-plugins/$(PLUGIN_NAME)
 
 INIT_IMAGE_TAG = container-sandbox-init:latest
 
-.PHONY: build install link uninstall clean init-image
+.PHONY: build install link uninstall clean init-image verify lint test
 
 build:
 	swift build $(SWIFT_BUILD_FLAGS)
@@ -45,6 +45,18 @@ init-image:
 	container build --tag $(INIT_IMAGE_TAG) \
 		--build-arg VMINIT_TAG=$$(container system property get image.init | sed 's/.*://') \
 		--file init-image/Containerfile init-image/
+
+verify: lint test  ## Run full verification suite
+
+lint:  ## Run SwiftLint
+	@if command -v swiftlint >/dev/null 2>&1; then \
+		swiftlint lint --strict --quiet; \
+	else \
+		echo "warning: swiftlint not installed, skipping lint"; \
+	fi
+
+test:  ## Run hermetic test suite
+	swift test
 
 clean:
 	swift package clean

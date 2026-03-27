@@ -4,9 +4,7 @@ import NIOPosix
 @testable import sandbox
 import Testing
 
-@Suite("ProxyServer")
 struct ProxyServerTests {
-
     // MARK: - Domain filtering
 
     @Test func blockedHostReturns403() async throws {
@@ -167,7 +165,7 @@ struct ProxyServerTests {
     }
 
     private func waitForSocket(_ path: String) async throws {
-        for _ in 0..<100 {
+        for _ in 0 ..< 100 {
             if FileManager.default.fileExists(atPath: path) { return }
             try await Task.sleep(for: .milliseconds(10))
         }
@@ -238,7 +236,9 @@ private struct EchoServer {
             }
             .bind(host: "127.0.0.1", port: 0)
             .get()
-        let port = channel.localAddress!.port!
+        guard let port = channel.localAddress?.port else {
+            throw ProxyTestError.bindFailed
+        }
         return EchoServer(port: port, channel: channel, group: group)
     }
 
@@ -264,4 +264,5 @@ private enum ProxyTestError: Error {
     case readFailed
     case socketTimeout
     case unexpectedResponse(String)
+    case bindFailed
 }

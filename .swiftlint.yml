@@ -1,0 +1,38 @@
+# SwiftLint configuration — focused rules for catching real bugs.
+# Formatting is handled by swiftformat; these rules target correctness.
+
+included:
+  - Sources
+  - Tests
+
+opt_in_rules:
+  - force_unwrapping
+
+disabled_rules:
+  - line_length          # swiftformat handles this
+  - identifier_name      # too opinionated for CLI code
+  - trailing_comma       # swiftformat handles this
+  - opening_brace        # swiftformat handles this
+  - type_name            # short names like IO are fine
+  - for_where            # style preference, not a bug risk
+  - unused_optional_binding  # `let _ =` in `if let` is idiomatic for existence checks
+  - orphaned_doc_comment # false positives on NIO handler docs
+
+force_cast:
+  severity: error
+
+function_body_length:
+  warning: 60
+  error: 100
+
+cyclomatic_complexity:
+  warning: 15
+  error: 25
+
+type_body_length:
+  warning: 300
+  error: 500
+
+file_length:
+  warning: 500
+  error: 800
