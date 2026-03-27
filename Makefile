@@ -17,7 +17,7 @@ build:
 	swift build $(SWIFT_BUILD_FLAGS)
 
 # Full install: copy binary to stable location + create symlink
-install: build
+install: build init-image
 	@if [ -z "$(CONTAINER_PREFIX)" ]; then echo "Error: container not installed via Homebrew"; exit 1; fi
 	@echo "Installing to $(STABLE_DIR)"
 	mkdir -p "$(STABLE_DIR)/bin"

@@ -9,6 +9,9 @@ enum SandboxError: LocalizedError {
     case initImageMissing
     case networkPolicyMismatch(name: String, existing: NetworkPolicy, requested: NetworkPolicy)
     case extraWorkspaceMismatch(name: String)
+    case workspaceMismatch(name: String, existing: String, requested: String)
+    case agentMismatch(name: String, existing: String, requested: String)
+    case notManagedSandbox(String)
     case outdatedSandbox(String)
 
     var errorDescription: String? {
@@ -45,6 +48,12 @@ enum SandboxError: LocalizedError {
             }()
         case let .extraWorkspaceMismatch(name):
             "Sandbox '\(name)' has different extra workspace mounts. Run 'sandbox rm \(name)' to recreate."
+        case let .workspaceMismatch(name, existing, requested):
+            "Sandbox '\(name)' is bound to workspace '\(existing)', not '\(requested)'. Run 'sandbox rm \(name)' to recreate."
+        case let .agentMismatch(name, existing, requested):
+            "Sandbox '\(name)' uses agent '\(existing)', not '\(requested)'. Run 'sandbox rm \(name)' to recreate."
+        case let .notManagedSandbox(name):
+            "'\(name)' is not a sandbox managed by this plugin."
         case let .outdatedSandbox(name):
             "Sandbox '\(name)' was created with an older version. Run 'sandbox rm \(name)' and recreate it."
         }

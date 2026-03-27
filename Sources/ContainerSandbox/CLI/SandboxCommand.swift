@@ -80,6 +80,14 @@ struct RunCommand: AsyncParsableCommand {
         abstract: "Run an agent in a sandbox"
     )
 
+    @Option(name: [.short, .long], help: "Override sandbox name")
+    var name: String?
+
+    @Option(name: [.short, .long], help: "Set environment variables (KEY=VALUE)")
+    var env: [String] = []
+
+    @OptionGroup var networkOptions: NetworkPolicyOptions
+
     @Argument(help: "Agent name (e.g., claude, shell) or existing sandbox name")
     var agent: String
 
@@ -88,14 +96,6 @@ struct RunCommand: AsyncParsableCommand {
 
     @Argument(parsing: .captureForPassthrough, help: "Extra workspaces (append :ro for read-only) and agent arguments (after --)")
     var extra: [String] = []
-
-    @Option(name: [.short, .long], help: "Override sandbox name")
-    var name: String?
-
-    @Option(name: [.short, .long], help: "Set environment variables (KEY=VALUE)")
-    var env: [String] = []
-
-    @OptionGroup var networkOptions: NetworkPolicyOptions
 
     func run() async throws {
         var extraWorkspaces: [String] = []
@@ -116,17 +116,20 @@ struct RunCommand: AsyncParsableCommand {
         guard let template = AgentRegistry.resolve(agent) else {
             // Treat as existing sandbox name
             guard let snapshot = try await manager.getSandbox(name: agent) else {
-                throw SandboxError.unknownAgent(agent)
+                throw SandboxError.sandboxNotFound(agent)
             }
             try await manager.bootstrapIfNeeded(name: agent, snapshot: snapshot)
+            let initConfig = snapshot.configuration.initProcess
             let config = ProcessConfiguration(
                 executable: "/bin/bash",
                 arguments: [],
                 environment: SandboxManager.execEnvironment(
-                    base: snapshot.configuration.initProcess.environment
+                    base: initConfig.environment,
+                    extras: env
                 ),
+                workingDirectory: snapshot.configuration.labels[SandboxLabels.workspace] ?? initConfig.workingDirectory,
                 terminal: true,
-                user: snapshot.configuration.initProcess.user
+                user: initConfig.user
             )
             let exitCode = try await manager.runTracked(name: agent, configuration: config)
             throw ExitCode(exitCode)
@@ -197,12 +200,6 @@ struct ExecCommand: AsyncParsableCommand {
         abstract: "Execute a command inside a sandbox"
     )
 
-    @Argument(help: "Sandbox name")
-    var sandboxName: String
-
-    @Argument(parsing: .captureForPassthrough, help: "Command and arguments")
-    var command: [String] = []
-
     @Option(name: [.short, .long], help: "Set environment variables (KEY=VALUE)")
     var env: [String] = []
 
@@ -211,6 +208,12 @@ struct ExecCommand: AsyncParsableCommand {
 
     @Flag(name: [.short, .long], help: "Allocate a TTY")
     var tty: Bool = false
+
+    @Argument(help: "Sandbox name")
+    var sandboxName: String
+
+    @Argument(parsing: .captureForPassthrough, help: "Command and arguments")
+    var command: [String] = []
 
     func run() async throws {
         guard let executable = command.first else {
@@ -232,7 +235,7 @@ struct ExecCommand: AsyncParsableCommand {
                 base: initConfig.environment,
                 extras: env
             ),
-            workingDirectory: workdir ?? initConfig.workingDirectory,
+            workingDirectory: workdir ?? snapshot.configuration.labels[SandboxLabels.workspace] ?? initConfig.workingDirectory,
             terminal: tty,
             user: initConfig.user
         )

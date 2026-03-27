@@ -11,9 +11,11 @@ enum ProxyManager {
     static let proxyPort = 3128
 
     /// Environment variables that direct container traffic through the proxy.
-    /// Only HTTPS_PROXY is set — the proxy handles CONNECT (HTTPS tunneling) and
-    /// rejects plain HTTP. Both uppercase and lowercase variants are set for
-    /// compatibility (Go, wget, Python urllib check lowercase).
+    /// Only HTTPS_PROXY is set — the proxy handles CONNECT (HTTPS tunneling).
+    /// Plain HTTP is not proxied; adding HTTP forward proxying would let the
+    /// domain filter cover HTTP too, but that's not yet implemented.
+    /// Both uppercase and lowercase variants are set for compatibility (Go,
+    /// wget, Python urllib check lowercase).
     static var proxyEnvironment: [(key: String, value: String)] {
         let url = "http://127.0.0.1:\(proxyPort)"
         return [
@@ -43,8 +45,25 @@ enum ProxyManager {
     }
 
     /// Start the proxy if not already running. Returns the socket path.
+    /// Uses a per-sandbox file lock to prevent concurrent invocations from racing.
     @discardableResult
     static func startIfNeeded(name: String, policy: NetworkPolicy) async throws -> String {
+        try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+
+        // Acquire a per-sandbox file lock so concurrent run/exec invocations
+        // don't both pass the "already running?" check and start duplicate proxies.
+        let lockPath = stateDir.appendingPathComponent("\(name).lock").path
+        FileManager.default.createFile(atPath: lockPath, contents: nil)
+        let fd = open(lockPath, O_RDWR)
+        guard fd >= 0 else {
+            throw SandboxError.proxyStartFailed("failed to open proxy lock file")
+        }
+        defer { close(fd) }
+        guard flock(fd, LOCK_EX) == 0 else {
+            throw SandboxError.proxyStartFailed("failed to acquire proxy lock")
+        }
+        defer { flock(fd, LOCK_UN) }
+
         let socket = socketPath(for: name)
 
         // Check if already running.
@@ -57,10 +76,9 @@ enum ProxyManager {
         }
 
         // Write policy config for the proxy process.
-        try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
         let configPath = stateDir.appendingPathComponent("\(name)-config.json")
         let configData = try JSONEncoder().encode(policy)
-        try configData.write(to: configPath)
+        try configData.write(to: configPath, options: .atomic)
 
         // Find our own executable path to launch the hidden _proxy subcommand.
         let execPath = CommandLine.arguments[0]
@@ -68,6 +86,7 @@ enum ProxyManager {
         let process = Process()
         process.executableURL = URL(fileURLWithPath: execPath)
         process.arguments = ["_proxy", "--socket", socket, "--config", configPath.path]
+        process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
         // Log proxy stderr for diagnostics (bind failures, policy errors, etc.)
         let logPath = stateDir.appendingPathComponent("\(name)-proxy.log")
@@ -103,6 +122,8 @@ enum ProxyManager {
 
         try? FileManager.default.removeItem(atPath: state.socketPath)
         try? FileManager.default.removeItem(at: stateFilePath(for: name))
+        let lockPath = stateDir.appendingPathComponent("\(name).lock")
+        try? FileManager.default.removeItem(at: lockPath)
         let configPath = stateDir.appendingPathComponent("\(name)-config.json")
         try? FileManager.default.removeItem(at: configPath)
         let logPath = stateDir.appendingPathComponent("\(name)-proxy.log")
@@ -120,7 +141,7 @@ enum ProxyManager {
 
     private static func saveState(_ state: ProxyState, for name: String) throws {
         let data = try JSONEncoder().encode(state)
-        try data.write(to: stateFilePath(for: name))
+        try data.write(to: stateFilePath(for: name), options: .atomic)
     }
 
     private static func isProcessAlive(pid: Int32) -> Bool {

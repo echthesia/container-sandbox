@@ -110,10 +110,13 @@ extension NetworkPolicy {
             .split(separator: ",").map(String.init).filter { !$0.isEmpty }
         let blockedHosts = (labels[SandboxLabels.blockedHosts] ?? "")
             .split(separator: ",").map(String.init).filter { !$0.isEmpty }
-        let cidrsRaw = labels[SandboxLabels.blockedCIDRs] ?? ""
-        let blockedCIDRs = cidrsRaw.isEmpty
-            ? defaultBlockedCIDRs
-            : cidrsRaw.split(separator: ",").map(String.init)
+        // Absent label → use defaults; present-but-empty → intentionally empty.
+        let blockedCIDRs: [String]
+        if let cidrsRaw = labels[SandboxLabels.blockedCIDRs] {
+            blockedCIDRs = cidrsRaw.isEmpty ? [] : cidrsRaw.split(separator: ",").map(String.init)
+        } else {
+            blockedCIDRs = defaultBlockedCIDRs
+        }
         return NetworkPolicy(
             direction: direction,
             allowedHosts: allowedHosts,

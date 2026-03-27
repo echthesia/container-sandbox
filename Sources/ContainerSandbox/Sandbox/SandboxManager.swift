@@ -1,4 +1,5 @@
 import ContainerAPIClient
+import ContainerizationError
 import ContainerizationOCI
 import ContainerResource
 import Foundation
@@ -30,13 +31,16 @@ struct SandboxManager {
 
     func listSandboxes() async throws -> [ContainerSnapshot] {
         let all = try await client.list()
-        return all.filter { SandboxNaming.isSandboxName($0.id) }
+        return all.filter { $0.configuration.labels[SandboxLabels.managed] == "true" }
     }
 
     /// Get a specific sandbox by ID. Returns nil if not found.
     func getSandbox(name: String) async throws -> ContainerSnapshot? {
-        // Use direct get instead of listing all containers
-        return try? await client.get(id: name)
+        do {
+            return try await client.get(id: name)
+        } catch let error as ContainerizationError where error.code == .notFound {
+            return nil
+        }
     }
 
     // MARK: - Image Management
@@ -109,8 +113,10 @@ struct SandboxManager {
         let name = nameOverride ?? SandboxNaming.sandboxName(agent: template.name, workspacePath: resolvedWorkspace)
 
         if let existing = try await getSandbox(name: name) {
+            let labels = existing.configuration.labels
+
             // Verify the existing sandbox's network policy matches what was requested.
-            guard let existingPolicy = NetworkPolicy.fromLabels(existing.configuration.labels) else {
+            guard let existingPolicy = NetworkPolicy.fromLabels(labels) else {
                 throw SandboxError.outdatedSandbox(name)
             }
             if existingPolicy != networkPolicy {
@@ -120,9 +126,27 @@ struct SandboxManager {
                     requested: networkPolicy
                 )
             }
+            // Verify workspace matches.
+            let existingWorkspace = labels[SandboxLabels.workspace] ?? ""
+            if existingWorkspace != resolvedWorkspace {
+                throw SandboxError.workspaceMismatch(
+                    name: name,
+                    existing: existingWorkspace,
+                    requested: resolvedWorkspace
+                )
+            }
+            // Verify agent matches.
+            let existingAgent = labels[SandboxLabels.agent] ?? ""
+            if existingAgent != template.name {
+                throw SandboxError.agentMismatch(
+                    name: name,
+                    existing: existingAgent,
+                    requested: template.name
+                )
+            }
             // Verify extra workspace mounts match.
             let requestedLabel = Self.extraWorkspacesLabel(extraWorkspaces)
-            let existingLabel = existing.configuration.labels[SandboxLabels.extraWorkspaces] ?? ""
+            let existingLabel = labels[SandboxLabels.extraWorkspaces] ?? ""
             if existingLabel != requestedLabel {
                 throw SandboxError.extraWorkspaceMismatch(name: name)
             }
@@ -219,7 +243,10 @@ struct SandboxManager {
         // Always ensure proxy is running with current policy from labels.
         try await ProxyManager.startIfNeeded(name: name, policy: policy)
 
-        if snapshot.status == .running {
+        // Re-fetch status to avoid racing with another process that may have
+        // already started this container between the caller's snapshot and now.
+        let current = try await client.get(id: name)
+        if current.status == .running {
             return
         }
 
@@ -268,19 +295,35 @@ struct SandboxManager {
     }
 
     func stopSandbox(name: String) async throws {
-        SessionTracker.clearAll(for: name)
-        ProxyManager.stop(name: name)
+        // Always clean up host-side resources, even if the container was
+        // deleted externally (e.g. via `container rm` instead of `sandbox rm`).
+        defer {
+            SessionTracker.clearAll(for: name)
+            ProxyManager.stop(name: name)
+        }
+        guard let snapshot = try await getSandbox(name: name) else {
+            // Container already gone — defer handles host-side cleanup.
+            return
+        }
+        guard snapshot.configuration.labels[SandboxLabels.managed] == "true" else {
+            throw SandboxError.notManagedSandbox(name)
+        }
         try await client.stop(id: name)
     }
 
     func deleteSandbox(name: String) async throws {
+        if let snapshot = try await getSandbox(name: name) {
+            guard snapshot.configuration.labels[SandboxLabels.managed] == "true" else {
+                throw SandboxError.notManagedSandbox(name)
+            }
+            if snapshot.status == .running {
+                try await client.stop(id: name)
+            }
+            try await client.delete(id: name)
+        }
+        // Clean up host-side resources after container is gone.
         SessionTracker.clearAll(for: name)
         ProxyManager.stop(name: name)
-        let snapshot = try await client.get(id: name)
-        if snapshot.status == .running {
-            try await client.stop(id: name)
-        }
-        try await client.delete(id: name)
     }
 
     func exportSandbox(name: String, to path: String) async throws {

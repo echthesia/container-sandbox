@@ -1,8 +1,8 @@
 /// Split a "KEY=VALUE" string into its components.
 /// Returns nil if no `=` is present.
 func parseEnvEntry(_ entry: String) -> (key: String, value: String)? {
-    let parts = entry.split(separator: "=", maxSplits: 1)
-    guard parts.count == 2 else { return nil }
+    let parts = entry.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false)
+    guard parts.count == 2, !parts[0].isEmpty else { return nil }
     return (String(parts[0]), String(parts[1]))
 }
 
