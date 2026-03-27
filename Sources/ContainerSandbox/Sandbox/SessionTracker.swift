@@ -83,12 +83,12 @@ struct SessionTracker {
         try? storage.removeSession(containerId: containerId, sessionId: sessionId)
 
         guard let sessions = try? storage.listSessions(containerId: containerId) else {
-            return true
+            return false
         }
 
         var liveCount = 0
         for (id, pid) in sessions {
-            if pidIsAlive(pid) {
+            if pid > 0 && pidIsAlive(pid) {
                 liveCount += 1
             } else {
                 try? storage.removeSession(containerId: containerId, sessionId: id)

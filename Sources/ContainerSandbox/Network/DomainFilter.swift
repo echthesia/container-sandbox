@@ -11,7 +11,8 @@ struct DomainFilter {
 
     /// Evaluate whether a connection to `host:port` should be allowed.
     func evaluate(host: String, port: Int) -> Decision {
-        let host = host.lowercased()
+        var host = host.lowercased()
+        if host.hasSuffix(".") { host = String(host.dropLast()) }
 
         // Always check blocked hosts first (both directions).
         if matchesAny(host: host, port: port, patterns: policy.blockedHosts) {

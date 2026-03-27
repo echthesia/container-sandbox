@@ -20,13 +20,6 @@ enum SandboxNaming {
         id.hasPrefix("\(prefix)-")
     }
 
-    /// Extract the agent name from a sandbox ID, if possible.
-    static func agentName(from sandboxId: String) -> String? {
-        let parts = sandboxId.split(separator: "-", maxSplits: 2)
-        guard parts.count >= 2, parts[0] == prefix else { return nil }
-        return String(parts[1])
-    }
-
     private static func sanitize(_ name: String) -> String {
         let sanitized = name.unicodeScalars.filter { allowedCharacters.contains($0) }
         let result = String(String.UnicodeScalarView(sanitized))

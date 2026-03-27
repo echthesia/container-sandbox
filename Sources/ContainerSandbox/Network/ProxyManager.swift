@@ -188,6 +188,7 @@ struct ProxyManager {
         // Check if already running.
         if let state = try? stateStorage.loadState(for: name) {
             if launcher.isProcessAlive(pid: state.pid) && stateStorage.socketExists(path: state.socketPath) {
+                _ = try stateStorage.writePolicy(policy, for: name)
                 return state.socketPath
             }
             // Stale state — clean up.

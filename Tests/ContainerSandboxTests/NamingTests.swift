@@ -46,31 +46,6 @@ struct NamingTests {
         #expect(!SandboxNaming.isSandboxName(""))
     }
 
-    @Test func extractsAgentName() {
-        #expect(SandboxNaming.agentName(from: "sandbox-claude-myproject-abcd1234") == "claude")
-        #expect(SandboxNaming.agentName(from: "sandbox-shell-foo-1234abcd") == "shell")
-        #expect(SandboxNaming.agentName(from: "not-a-sandbox") == nil)
-        #expect(SandboxNaming.agentName(from: "") == nil)
-    }
-
-    // MARK: - Adversarial: agent name extraction
-
-    @Test func hyphenatedAgentNameExtraction() {
-        // Agent name "my-agent" produces sandbox name "sandbox-my-agent-foo-hash"
-        // But split(separator: "-", maxSplits: 2) gives ["sandbox", "my", "agent-foo-hash"]
-        // So agentName extracts "my" instead of "my-agent"
-        let name = SandboxNaming.sandboxName(agent: "my-agent", workspacePath: "/foo/bar")
-        let extracted = SandboxNaming.agentName(from: name)
-        #expect(extracted == "my-agent")
-    }
-
-    @Test func agentNameFromMinimalSandboxId() {
-        // "sandbox-" with nothing after the second part
-        let extracted = SandboxNaming.agentName(from: "sandbox-")
-        // split gives ["sandbox", ""], parts[1] is "" — should return nil for empty agent
-        #expect(extracted == nil)
-    }
-
     @Test func isSandboxNameMinimalPrefix() {
         // "sandbox-" is the bare minimum that matches the prefix check
         #expect(SandboxNaming.isSandboxName("sandbox-"))

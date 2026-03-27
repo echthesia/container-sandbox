@@ -185,9 +185,10 @@ struct DomainFilterTests {
     // MARK: - Adversarial: trailing dot bypass
 
     @Test func trailingDotShouldNotBypassExactMatch() {
-        // DNS canonical form uses trailing dot; should not bypass filter
+        // DNS canonical form uses trailing dot — "example.com." and "example.com"
+        // are the same host, so an allowed host should match with or without the dot.
         let filter = DomainFilter(policy: .deny(allowedHosts: ["example.com"]))
-        #expect(filter.evaluate(host: "example.com.", port: 443) != .allow)
+        #expect(filter.evaluate(host: "example.com.", port: 443) == .allow)
     }
 
     @Test func trailingDotBypassesWildcardBaseExclusion() {

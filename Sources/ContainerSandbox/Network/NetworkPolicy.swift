@@ -73,11 +73,19 @@ extension NetworkPolicy: Equatable {
         lhs.direction == rhs.direction
             && normalizedSet(lhs.allowedHosts) == normalizedSet(rhs.allowedHosts)
             && normalizedSet(lhs.blockedHosts) == normalizedSet(rhs.blockedHosts)
-            && Set(lhs.blockedCIDRs) == Set(rhs.blockedCIDRs)
+            && normalizedCIDRSet(lhs.blockedCIDRs) == normalizedCIDRSet(rhs.blockedCIDRs)
     }
 
     private static func normalizedSet(_ hosts: [String]) -> Set<String> {
         Set(hosts.map { $0.lowercased() })
+    }
+
+    private static func normalizedCIDRSet(_ cidrs: [String]) -> Set<String> {
+        Set(cidrs.map { cidr in
+            let parts = cidr.split(separator: "/", maxSplits: 1)
+            guard parts.count == 2, let prefix = Int(parts[1]) else { return cidr }
+            return "\(parts[0])/\(prefix)"
+        })
     }
 }
 

@@ -163,6 +163,7 @@ struct SandboxManager {
             guard FileManager.default.fileExists(atPath: resolved) else {
                 throw SandboxError.workspaceNotFound(resolved)
             }
+            if resolved == resolvedWorkspace { continue }
             config.mounts.append(
                 .virtiofs(source: resolved, destination: resolved, options: readOnly ? ["ro"] : [])
             )
