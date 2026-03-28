@@ -156,21 +156,16 @@ struct FakeSessionTrackerTests {
 
     // MARK: - Adversarial: error handling
 
-    @Test func listSessionsErrorReturnsTrueStoppingContainer() throws {
-        // If storage.listSessions throws, remove() returns true (last session),
-        // which triggers container stop — even if sessions are still active
+    @Test func listSessionsErrorDoesNotStopContainer() throws {
         let storage = FakeSessionStorage()
         let tracker = SessionTracker(storage: storage, pidIsAlive: { _ in true })
 
         try storage.createSession(containerId: "c1", sessionId: "s1", pid: 42)
         try storage.createSession(containerId: "c1", sessionId: "s2", pid: 43)
 
-        // Now make listing fail
         storage.shouldThrowOnList = true
 
         let wasLast = tracker.remove(sessionId: "s1", for: "c1")
-        // BUG: returns true because `try? storage.listSessions()` returns nil → true
-        // Correct behavior: should return false (sessions still exist, we just can't read them)
         #expect(!wasLast, "Storage error should not cause container stop when sessions may exist")
     }
 

@@ -1,4 +1,7 @@
 import Foundation
+import Logging
+
+private let log = Logger(label: "container-sandbox.sessions")
 
 /// Abstracts filesystem operations for session tracking, enabling in-memory fakes in tests.
 protocol SessionStorage: Sendable {
@@ -83,7 +86,11 @@ struct SessionTracker {
     func remove(sessionId: String, for containerId: String) -> Bool {
         try? storage.removeSession(containerId: containerId, sessionId: sessionId)
 
-        guard let sessions = try? storage.listSessions(containerId: containerId) else {
+        let sessions: [(sessionId: String, pid: Int32)]
+        do {
+            sessions = try storage.listSessions(containerId: containerId)
+        } catch {
+            log.warning("Failed to list sessions for '\(containerId)': \(error). Auto-stop disabled until next session exit.")
             return false
         }
 

@@ -262,7 +262,7 @@ struct ListCommand: AsyncParsableCommand {
             for s in sandboxes {
                 let agent = s.configuration.labels[SandboxLabels.agent] ?? "?"
                 let workspace = s.configuration.labels[SandboxLabels.workspace] ?? "?"
-                let direction = (try? manager.proxy.stateStorage.loadPolicy(for: s.id))?.direction.rawValue ?? "?"
+                let direction = (try? manager.getPolicy(for: s.id))?.direction.rawValue ?? "?"
                 print("\(pad(s.id, 40)) \(pad(agent, 10)) \(pad(s.status.rawValue, 10)) \(pad(direction, 10)) \(workspace)")
             }
         }

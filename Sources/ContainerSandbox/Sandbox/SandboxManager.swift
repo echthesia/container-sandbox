@@ -288,6 +288,11 @@ struct SandboxManager {
         try await containers.export(id: name, archive: URL(fileURLWithPath: path))
     }
 
+    /// Load the network policy for a sandbox from state storage.
+    func getPolicy(for name: String) throws -> NetworkPolicy? {
+        try proxy.stateStorage.loadPolicy(for: name)
+    }
+
     // MARK: - Utilities
 
     /// Build a canonical label value for extra workspaces.
