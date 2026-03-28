@@ -147,9 +147,9 @@ struct ExtraWorkspacesLabelTests {
         #expect(label.hasSuffix(":ro"))
     }
 
-    @Test func multipleWorkspacesSeparatedByComma() {
+    @Test func multipleWorkspacesSeparatedByNewline() {
         let label = SandboxManager.extraWorkspacesLabel(["/a", "/b"])
-        #expect(label.contains(","))
+        #expect(label.contains("\n"))
     }
 }
 

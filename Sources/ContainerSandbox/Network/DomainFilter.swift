@@ -12,7 +12,9 @@ struct DomainFilter {
     /// Evaluate whether a connection to `host:port` should be allowed.
     func evaluate(host: String, port: Int) -> Decision {
         var host = host.lowercased()
-        if host.hasSuffix(".") { host = String(host.dropLast()) }
+        while host.hasSuffix(".") {
+            host = String(host.dropLast())
+        }
 
         // Always check blocked hosts first (both directions).
         if matchesAny(host: host, port: port, patterns: policy.blockedHosts) {
@@ -37,7 +39,8 @@ struct DomainFilter {
     /// Also detects IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) and checks
     /// the embedded IPv4 against IPv4 CIDRs.
     func isBlockedCIDR(_ ip: String) -> Bool {
-        for cidr in policy.blockedCIDRs {
+        let trimmedCIDRs = policy.blockedCIDRs.map { $0.trimmingCharacters(in: .whitespaces) }
+        for cidr in trimmedCIDRs {
             if cidrContains(cidr, address: ip) {
                 return true
             }
@@ -46,7 +49,7 @@ struct DomainFilter {
         // embedded IPv4 against all CIDRs (catches e.g. ::ffff:10.0.0.5
         // against 10.0.0.0/8).
         if let v4 = extractMappedIPv4(ip) {
-            for cidr in policy.blockedCIDRs {
+            for cidr in trimmedCIDRs {
                 if cidrContains(cidr, address: v4) {
                     return true
                 }
@@ -67,8 +70,12 @@ extension DomainFilter {
     /// - `*.example.com` — wildcard subdomain match, any port
     /// - `*.example.com:443` — wildcard subdomain + port match
     private func matchesAny(host: String, port: Int, patterns: [String]) -> Bool {
-        for pattern in patterns {
-            if matches(host: host, port: port, pattern: pattern.lowercased()) {
+        for rawPattern in patterns {
+            var pattern = rawPattern.trimmingCharacters(in: .whitespaces).lowercased()
+            while pattern.hasSuffix(".") {
+                pattern = String(pattern.dropLast())
+            }
+            if matches(host: host, port: port, pattern: pattern) {
                 return true
             }
         }

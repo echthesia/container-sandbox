@@ -11,6 +11,8 @@ func parseEnvEntry(_ entry: String) -> (key: String, value: String)? {
 /// Handles IPv6 brackets (`[::1]:443`), plain `host:port`, and bare hostnames.
 /// Returns a nil port when none is specified.
 func parseHostPort(_ input: String) -> (host: String, port: Int?) {
+    let input = input.filter { !$0.isWhitespace }
+
     // Handle IPv6 in brackets: [::1]:443
     if input.hasPrefix("["), let bracketEnd = input.firstIndex(of: "]") {
         let host = String(input[input.index(after: input.startIndex) ..< bracketEnd])

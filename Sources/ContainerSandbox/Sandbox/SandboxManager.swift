@@ -142,13 +142,15 @@ struct SandboxManager {
             .virtiofs(source: resolvedWorkspace, destination: resolvedWorkspace, options: [])
         )
 
+        var mountedPaths: Set<String> = [resolvedWorkspace]
         for extra in extraWorkspaces {
             let (path, readOnly) = Self.parseWorkspacePath(extra)
+            guard !path.isEmpty else { continue }
             let resolved = Self.resolveWorkspacePath(path)
             guard FileManager.default.fileExists(atPath: resolved) else {
                 throw SandboxError.workspaceNotFound(resolved)
             }
-            if resolved == resolvedWorkspace { continue }
+            guard mountedPaths.insert(resolved).inserted else { continue }
             config.mounts.append(
                 .virtiofs(source: resolved, destination: resolved, options: readOnly ? ["ro"] : [])
             )
@@ -291,11 +293,12 @@ struct SandboxManager {
     /// Build a canonical label value for extra workspaces.
     /// Resolves paths, sorts, and joins so reuse checks are order-independent.
     static func extraWorkspacesLabel(_ extras: [String]) -> String {
-        extras.map { input in
+        extras.compactMap { input in
             let (path, readOnly) = parseWorkspacePath(input)
+            guard !path.isEmpty else { return nil }
             let resolved = resolveWorkspacePath(path)
             return readOnly ? "\(resolved):ro" : resolved
-        }.sorted().joined(separator: ",")
+        }.sorted().joined(separator: "\n")
     }
 
     /// Build an exec environment from a container's init config with last-writer-wins dedup.
