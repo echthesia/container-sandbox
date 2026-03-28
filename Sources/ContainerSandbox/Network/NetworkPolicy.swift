@@ -66,7 +66,31 @@ struct NetworkPolicy: Codable {
     }
 }
 
-// MARK: - Equatable (order/case/duplicate-insensitive for host lists)
+// MARK: - Codable (validates CIDRs on decode)
+
+extension NetworkPolicy {
+    enum CodingKeys: String, CodingKey {
+        case direction, allowedHosts, blockedHosts, blockedCIDRs
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        direction = try container.decode(PolicyDirection.self, forKey: .direction)
+        allowedHosts = try container.decode([String].self, forKey: .allowedHosts)
+        blockedHosts = try container.decode([String].self, forKey: .blockedHosts)
+        blockedCIDRs = try container.decode([String].self, forKey: .blockedCIDRs)
+        for cidr in blockedCIDRs {
+            guard NormalizedCIDR(cidr) != nil else {
+                throw DecodingError.dataCorruptedError(
+                    forKey: .blockedCIDRs, in: container,
+                    debugDescription: "Invalid CIDR '\(cidr)' in policy — fix or delete the policy file"
+                )
+            }
+        }
+    }
+}
+
+// MARK: - Equatable (order/case/duplicate-insensitive for host lists, binary for CIDRs)
 
 extension NetworkPolicy: Equatable {
     static func == (lhs: NetworkPolicy, rhs: NetworkPolicy) -> Bool {
@@ -80,11 +104,38 @@ extension NetworkPolicy: Equatable {
         Set(hosts.map { $0.lowercased() })
     }
 
-    private static func normalizedCIDRSet(_ cidrs: [String]) -> Set<String> {
-        Set(cidrs.map { cidr in
-            let parts = cidr.split(separator: "/", maxSplits: 1)
-            guard parts.count == 2, let prefix = Int(parts[1]) else { return cidr }
-            return "\(parts[0])/\(prefix)"
-        })
+    private static func normalizedCIDRSet(_ cidrs: [String]) -> Set<NormalizedCIDR> {
+        Set(cidrs.compactMap { NormalizedCIDR($0) })
+    }
+}
+
+/// Binary representation of a CIDR for case/format-insensitive comparison.
+/// Uses inet_pton to parse the address into raw bytes so that "FC00::/7",
+/// "fc00::/7", and "0:0:0:0:0:0:0:0/7" (if within range) all compare equal.
+struct NormalizedCIDR: Hashable {
+    let addressBytes: [UInt8]
+    let prefixLength: Int
+
+    init?(_ cidr: String) {
+        let parts = cidr.split(separator: "/", maxSplits: 1)
+        guard parts.count == 2, let prefix = Int(parts[1]) else { return nil }
+        let addr = String(parts[0])
+
+        // Try IPv4 first, then IPv6.
+        var sa4 = in_addr()
+        if inet_pton(AF_INET, addr, &sa4) == 1 {
+            guard prefix >= 0, prefix <= 32 else { return nil }
+            addressBytes = withUnsafeBytes(of: sa4) { Array($0) }
+            prefixLength = prefix
+            return
+        }
+        var sa6 = in6_addr()
+        if inet_pton(AF_INET6, addr, &sa6) == 1 {
+            guard prefix >= 0, prefix <= 128 else { return nil }
+            addressBytes = withUnsafeBytes(of: sa6) { Array($0) }
+            prefixLength = prefix
+            return
+        }
+        return nil
     }
 }

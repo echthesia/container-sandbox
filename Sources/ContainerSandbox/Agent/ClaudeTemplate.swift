@@ -1,11 +1,10 @@
-struct ClaudeTemplate: AgentTemplate, Sendable {
+struct ClaudeTemplate: AgentTemplate {
     let name = "claude"
     let defaultImage = "container-sandbox-claude:latest"
 
     let entrypoint = ["/home/sandbox/.local/bin/claude", "--dangerously-skip-permissions"]
 
     let defaultEnvironment: [String: String] = [
-        "TERM": "xterm-256color",
         "LANG": "en_US.UTF-8",
         "LC_ALL": "en_US.UTF-8",
     ]

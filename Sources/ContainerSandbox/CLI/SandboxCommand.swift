@@ -112,7 +112,8 @@ struct RunCommand: AsyncParsableCommand {
                     arguments: [],
                     environment: SandboxManager.execEnvironment(
                         base: initConfig.environment,
-                        extras: env
+                        extras: env,
+                        tty: true
                     ),
                     workingDirectory: workDir,
                     terminal: true,
@@ -154,6 +155,9 @@ struct CreateCommand: AsyncParsableCommand {
         abstract: "Create a sandbox without starting it"
     )
 
+    @Option(name: [.short, .long], help: "Override sandbox name")
+    var name: String?
+
     @Argument(help: "Agent name (e.g., claude, shell)")
     var agent: String
 
@@ -166,11 +170,12 @@ struct CreateCommand: AsyncParsableCommand {
         }
 
         let manager = SandboxManager()
-        let (name, _) = try await manager.ensureSandboxExists(
+        let (sandboxName, _) = try await manager.ensureSandboxExists(
             template: template,
-            workspace: workspace
+            workspace: workspace,
+            nameOverride: name
         )
-        print(name)
+        print(sandboxName)
     }
 }
 
@@ -213,7 +218,8 @@ struct ExecCommand: AsyncParsableCommand {
             arguments: Array(command.dropFirst()),
             environment: SandboxManager.execEnvironment(
                 base: initConfig.environment,
-                extras: env
+                extras: env,
+                tty: tty
             ),
             workingDirectory: workdir ?? snapshot.configuration.labels[SandboxLabels.workspace] ?? initConfig.workingDirectory,
             terminal: tty,
@@ -384,7 +390,7 @@ struct NetworkProxyCommand: AsyncParsableCommand {
                 updated.blockedHosts.append(contentsOf: blockHost)
             }
 
-            try manager.proxy.stateStorage.ensureStateDirectory()
+            try manager.proxy.stateStorage.ensureStateDirectory(for: sandboxName)
             _ = try manager.proxy.stateStorage.writePolicy(updated, for: sandboxName)
 
             // Restart proxy if sandbox is running.

@@ -23,6 +23,11 @@ func parseHostPort(_ input: String) -> (host: String, port: Int?) {
         return (host, nil)
     }
 
+    // Bare IPv6 (multiple colons, no brackets) — return as-is, no port.
+    if input.filter({ $0 == ":" }).count > 1 {
+        return (input, nil)
+    }
+
     // Split on last colon only if the suffix is a valid port number.
     if let lastColon = input.lastIndex(of: ":") {
         let host = String(input[..<lastColon])

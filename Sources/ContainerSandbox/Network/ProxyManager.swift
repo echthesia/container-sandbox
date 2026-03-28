@@ -10,7 +10,7 @@ protocol ProxyLauncher: Sendable {
 
 /// Abstracts state persistence and filesystem operations for proxy management.
 protocol ProxyStateStorage: Sendable {
-    func ensureStateDirectory() throws
+    func ensureStateDirectory(for name: String) throws
     func loadState(for name: String) throws -> ProxyState?
     func saveState(_ state: ProxyState, for name: String) throws
     /// Remove runtime state (PID, lock, log) but preserve the policy config.
@@ -21,6 +21,8 @@ protocol ProxyStateStorage: Sendable {
     func loadPolicy(for name: String) throws -> NetworkPolicy?
     func socketExists(path: String) -> Bool
     func removeSocket(path: String)
+    func ensureSocketDir(for name: String)
+    func removeSocketDir(for name: String)
     func logPath(for name: String) -> URL
     /// Acquire a per-sandbox lock. Returns a handle that releases on deinit/close.
     func acquireLock(for name: String) throws -> ProxyLockHandle
@@ -71,16 +73,21 @@ struct SystemProxyLauncher: ProxyLauncher {
 }
 
 /// Default filesystem-backed state storage for proxy management.
+/// All per-sandbox state lives under `~/.local/state/container-sandbox/{name}/`.
 struct FileProxyStateStorage: ProxyStateStorage {
     private let stateDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".local/state/container-sandbox/proxy")
+        .appendingPathComponent(".local/state/container-sandbox")
 
-    func ensureStateDirectory() throws {
-        try FileManager.default.createDirectory(at: stateDir, withIntermediateDirectories: true)
+    private func sandboxDir(for name: String) -> URL {
+        stateDir.appendingPathComponent(name)
+    }
+
+    func ensureStateDirectory(for name: String) throws {
+        try FileManager.default.createDirectory(at: sandboxDir(for: name), withIntermediateDirectories: true)
     }
 
     func loadState(for name: String) throws -> ProxyState? {
-        let path = stateDir.appendingPathComponent("\(name).json")
+        let path = sandboxDir(for: name).appendingPathComponent("proxy.json")
         guard FileManager.default.fileExists(atPath: path.path) else { return nil }
         let data = try Data(contentsOf: path)
         return try JSONDecoder().decode(ProxyState.self, from: data)
@@ -88,37 +95,29 @@ struct FileProxyStateStorage: ProxyStateStorage {
 
     func saveState(_ state: ProxyState, for name: String) throws {
         let data = try JSONEncoder().encode(state)
-        try data.write(to: stateDir.appendingPathComponent("\(name).json"), options: .atomic)
+        try data.write(to: sandboxDir(for: name).appendingPathComponent("proxy.json"), options: .atomic)
     }
 
     func removeRuntimeState(for name: String) {
-        let runtimeFiles = [
-            "\(name).json", // PID state
-            "\(name).lock",
-            "\(name)-proxy.log",
-        ]
-        for file in runtimeFiles {
-            try? FileManager.default.removeItem(at: stateDir.appendingPathComponent(file))
+        let dir = sandboxDir(for: name)
+        for file in ["proxy.json", "proxy.lock", "proxy.log"] {
+            try? FileManager.default.removeItem(at: dir.appendingPathComponent(file))
         }
     }
 
     func removeAll(for name: String) {
-        removeRuntimeState(for: name)
-        // Also remove the persistent policy config.
-        try? FileManager.default.removeItem(
-            at: stateDir.appendingPathComponent("\(name)-config.json")
-        )
+        try? FileManager.default.removeItem(at: sandboxDir(for: name))
     }
 
     func writePolicy(_ policy: NetworkPolicy, for name: String) throws -> String {
-        let configPath = stateDir.appendingPathComponent("\(name)-config.json")
+        let configPath = sandboxDir(for: name).appendingPathComponent("policy.json")
         let data = try JSONEncoder().encode(policy)
         try data.write(to: configPath, options: .atomic)
         return configPath.path
     }
 
     func loadPolicy(for name: String) throws -> NetworkPolicy? {
-        let configPath = stateDir.appendingPathComponent("\(name)-config.json")
+        let configPath = sandboxDir(for: name).appendingPathComponent("policy.json")
         guard FileManager.default.fileExists(atPath: configPath.path) else { return nil }
         let data = try Data(contentsOf: configPath)
         return try JSONDecoder().decode(NetworkPolicy.self, from: data)
@@ -132,12 +131,22 @@ struct FileProxyStateStorage: ProxyStateStorage {
         try? FileManager.default.removeItem(atPath: path)
     }
 
+    func ensureSocketDir(for name: String) {
+        let dir = ProxyManager.socketDir(for: name)
+        mkdir(dir, 0o700)
+    }
+
+    func removeSocketDir(for name: String) {
+        let dir = ProxyManager.socketDir(for: name)
+        try? FileManager.default.removeItem(atPath: dir)
+    }
+
     func logPath(for name: String) -> URL {
-        stateDir.appendingPathComponent("\(name)-proxy.log")
+        sandboxDir(for: name).appendingPathComponent("proxy.log")
     }
 
     func acquireLock(for name: String) throws -> ProxyLockHandle {
-        let lockPath = stateDir.appendingPathComponent("\(name).lock").path
+        let lockPath = sandboxDir(for: name).appendingPathComponent("proxy.lock").path
         FileManager.default.createFile(atPath: lockPath, contents: nil)
         let fd = open(lockPath, O_RDWR | O_CLOEXEC)
         guard fd >= 0 else {
@@ -186,16 +195,22 @@ struct ProxyManager {
     }
 
     /// Compute a short socket path that fits within the 104-byte UDS limit.
-    static func socketPath(for sandboxName: String) -> String {
+    /// The socket lives inside a 0o700 directory so permissions are enforced
+    /// by the directory — no TOCTOU window between bind and chmod.
+    static func socketDir(for sandboxName: String) -> String {
         let hash = SandboxNaming.shortHash(sandboxName)
-        return "/tmp/cs-proxy-\(hash).sock"
+        return "/tmp/cs-proxy-\(hash)"
+    }
+
+    static func socketPath(for sandboxName: String) -> String {
+        "\(socketDir(for: sandboxName))/proxy.sock"
     }
 
     /// Start the proxy if not already running. Returns the socket path.
     /// Uses a per-sandbox file lock to prevent concurrent invocations from racing.
     @discardableResult
     func startIfNeeded(name: String, policy: NetworkPolicy) async throws -> String {
-        try stateStorage.ensureStateDirectory()
+        try stateStorage.ensureStateDirectory(for: name)
 
         let lock = try stateStorage.acquireLock(for: name)
         _ = lock // Hold lock until end of scope
@@ -217,6 +232,9 @@ struct ProxyManager {
             // Stale or killed — clean up.
             stateStorage.removeSocket(path: state.socketPath)
         }
+
+        // Create a private directory for the socket (0o700 — no TOCTOU).
+        stateStorage.ensureSocketDir(for: name)
 
         // Write policy config for the proxy process.
         let configPath = try stateStorage.writePolicy(policy, for: name)
@@ -254,6 +272,7 @@ struct ProxyManager {
             }
             stateStorage.removeSocket(path: state.socketPath)
         }
+        stateStorage.removeSocketDir(for: name)
         stateStorage.removeRuntimeState(for: name)
     }
 }

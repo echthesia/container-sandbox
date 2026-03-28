@@ -139,13 +139,13 @@ struct ProcessConfigurationTests {
         // Should contain base env, template defaults, and extras
         let keys = Set(config.environment.compactMap { parseEnvEntry($0)?.key })
         #expect(keys.contains("PATH")) // from base
-        #expect(keys.contains("TERM")) // from template defaults
+        #expect(keys.contains("TERM")) // injected for TTY
         #expect(keys.contains("CUSTOM")) // from extras
         #expect(keys.contains("HTTPS_PROXY")) // from proxy
     }
 
-    @Test func templateDefaultsOverrideBase() {
-        // ShellTemplate sets TERM=xterm-256color. If base also has TERM, template wins.
+    @Test func ttyTermOverridesBaseEnv() {
+        // TERM is injected after base env, so it overrides image defaults.
         let baseWithTerm = ProcessConfiguration(
             executable: "/bin/sleep",
             arguments: ["infinity"],
@@ -157,19 +157,19 @@ struct ProcessConfigurationTests {
             baseConfig: baseWithTerm,
             workingDirectory: "/workspace"
         )
-        // Template default TERM comes after base TERM → template wins
+        // Injected TERM comes after base → wins over image env
         #expect(config.environment.contains("TERM=xterm-256color"))
         #expect(!config.environment.contains("TERM=vt100"))
     }
 
-    @Test func callerExtrasOverrideTemplateDefaults() {
+    @Test func callerExtrasOverrideTTYTerm() {
         let template = ShellTemplate()
         let config = template.processConfiguration(
             baseConfig: baseConfig,
             workingDirectory: "/workspace",
             extraEnv: ["TERM": "dumb"]
         )
-        // Extras come after template defaults → extras win
+        // Extras come after TERM injection → extras win
         #expect(config.environment.contains("TERM=dumb"))
         #expect(!config.environment.contains("TERM=xterm-256color"))
     }

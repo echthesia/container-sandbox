@@ -94,32 +94,26 @@ struct HostPortTests {
 
     // MARK: - Edge cases: IPv6 without brackets
 
-    @Test func bareIPv6Misparse() {
-        // "::1" without brackets — lastIndex(of: ":") finds second colon,
-        // splits into ":" and "1", Int("1") succeeds → misparses as host=":", port=1
+    @Test func bareIPv6ReturnedAsHost() {
+        // Bare IPv6 without brackets — should not misparse as host:port
         let (host, port) = parseHostPort("::1")
-        // This is a silent misparse — the function documents brackets are required
-        // but doesn't fail gracefully for bare IPv6
-        #expect(host == ":")
-        #expect(port == 1)
+        #expect(host == "::1")
+        #expect(port == nil)
     }
 
-    @Test func bareIPv6FullMisparse() {
-        // "2001:db8::1" → lastIndex(of: ":") finds last ":", port="1" succeeds
+    @Test func bareIPv6FullReturnedAsHost() {
         let (host, port) = parseHostPort("2001:db8::1")
-        #expect(host == "2001:db8:")
-        #expect(port == 1)
+        #expect(host == "2001:db8::1")
+        #expect(port == nil)
     }
 
     // MARK: - Edge cases: bracket malformations
 
-    @Test func incompleteBracketLeaksIntoHost() {
-        // "[::1" — no closing bracket, bracket handling skipped
+    @Test func incompleteBracketReturnedAsHost() {
+        // "[::1" — no closing bracket, return as-is without misparsing
         let (host, port) = parseHostPort("[::1")
-        // Falls through to last-colon logic, misparses
-        // Correct behavior: should probably return ("[::1", nil) or error
-        #expect(host == "[:")
-        #expect(port == 1)
+        #expect(host == "[::1")
+        #expect(port == nil)
     }
 
     @Test func emptyBrackets() {

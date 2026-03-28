@@ -11,13 +11,21 @@ enum SandboxNaming {
     /// different directories share the same basename.
     static func sandboxName(agent: String, workspacePath: String) -> String {
         let url = URL(fileURLWithPath: workspacePath).standardized
+        let agentPart = sanitize(agent)
         let dirname = sanitize(url.lastPathComponent)
         let hash = shortHash(url.path)
-        return "\(prefix)-\(agent)-\(dirname)-\(hash)"
+        return "\(prefix)-\(agentPart)-\(dirname)-\(hash)"
     }
 
     static func isSandboxName(_ id: String) -> Bool {
         id.hasPrefix("\(prefix)-")
+    }
+
+    /// Validate that a name is safe to use as a directory component for state storage.
+    static func validateName(_ name: String) throws {
+        guard !name.isEmpty, name != ".", !name.contains("/"), !name.contains("..") else {
+            throw SandboxError.invalidName(name)
+        }
     }
 
     private static func sanitize(_ name: String) -> String {

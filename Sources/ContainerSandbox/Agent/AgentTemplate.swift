@@ -37,7 +37,7 @@ extension AgentTemplate {
         extraEnv: [String: String] = [:]
     ) -> ProcessConfiguration {
         // Layer env with last-writer-wins deduplication on key.
-        // Order: image defaults < template defaults < host passthrough < caller extras
+        // Order: image defaults < TERM (if tty) < template defaults < host passthrough < caller extras
         var envMap: [(key: String, value: String)] = []
 
         for entry in baseConfig.environment {
@@ -45,6 +45,9 @@ extension AgentTemplate {
                 envMap.append((k, v))
             }
         }
+        // Inject TERM for TTY sessions, matching Docker's behavior.
+        // Positioned before template defaults so templates can override.
+        envMap.append(("TERM", "xterm-256color"))
         for (key, value) in defaultEnvironment {
             envMap.append((key, value))
         }

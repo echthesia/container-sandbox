@@ -1,12 +1,10 @@
-struct ShellTemplate: AgentTemplate, Sendable {
+struct ShellTemplate: AgentTemplate {
     let name = "shell"
     let defaultImage = "docker.io/ubuntu:24.04"
 
     let entrypoint = ["/bin/bash"]
 
-    let defaultEnvironment: [String: String] = [
-        "TERM": "xterm-256color",
-    ]
+    let defaultEnvironment: [String: String] = [:]
 
     let passthroughEnvironment: [String] = []
 

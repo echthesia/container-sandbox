@@ -12,6 +12,7 @@ enum SandboxError: LocalizedError {
     case agentMismatch(name: String, existing: String, requested: String)
     case notManagedSandbox(String)
     case outdatedSandbox(String)
+    case invalidName(String)
 
     var errorDescription: String? {
         switch self {
@@ -37,6 +38,8 @@ enum SandboxError: LocalizedError {
             "'\(name)' is not a sandbox managed by this plugin."
         case let .outdatedSandbox(name):
             "Sandbox '\(name)' was created with an older version. Run 'sandbox rm \(name)' and recreate it."
+        case let .invalidName(name):
+            "Invalid sandbox name '\(name)'. Names must not be empty or contain '/' or '..'."
         }
     }
 }

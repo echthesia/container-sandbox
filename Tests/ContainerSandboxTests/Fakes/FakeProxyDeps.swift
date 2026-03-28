@@ -43,7 +43,7 @@ final class FakeProxyStateStorage: ProxyStateStorage, @unchecked Sendable {
     var socketAppearsAfterLaunch = true
     private var pendingSockets: Set<String> = []
 
-    func ensureStateDirectory() throws {}
+    func ensureStateDirectory(for _: String) throws {}
 
     func loadState(for name: String) throws -> ProxyState? {
         states[name]
@@ -83,6 +83,10 @@ final class FakeProxyStateStorage: ProxyStateStorage, @unchecked Sendable {
     func removeSocket(path: String) {
         sockets.remove(path)
     }
+
+    func ensureSocketDir(for _: String) {}
+
+    func removeSocketDir(for _: String) {}
 
     func logPath(for name: String) -> URL {
         URL(fileURLWithPath: "/fake/logs/\(name)-proxy.log")

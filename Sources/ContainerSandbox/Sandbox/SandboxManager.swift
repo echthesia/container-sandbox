@@ -82,6 +82,7 @@ struct SandboxManager {
         }
 
         let name = nameOverride ?? SandboxNaming.sandboxName(agent: template.name, workspacePath: resolvedWorkspace)
+        try SandboxNaming.validateName(name)
 
         if let existing = try await getSandbox(name: name) {
             let labels = existing.configuration.labels
@@ -298,15 +299,17 @@ struct SandboxManager {
     }
 
     /// Build an exec environment from a container's init config with last-writer-wins dedup.
-    /// Layers: base env < extras < TERM < proxy vars.
-    static func execEnvironment(base: [String], extras: [String] = []) -> [String] {
+    /// Layers: base env < TERM (if tty) < extras < proxy vars.
+    static func execEnvironment(base: [String], extras: [String] = [], tty: Bool = false) -> [String] {
         var envMap: [(key: String, value: String)] = []
         for entry in base {
             if let (k, v) = parseEnvEntry(entry) {
                 envMap.append((k, v))
             }
         }
-        envMap.append(("TERM", "xterm-256color"))
+        if tty {
+            envMap.append(("TERM", "xterm-256color"))
+        }
         for entry in extras {
             if let (k, v) = parseEnvEntry(entry) {
                 envMap.append((k, v))

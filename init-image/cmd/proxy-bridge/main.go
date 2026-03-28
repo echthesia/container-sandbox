@@ -7,6 +7,7 @@ import (
 	"io"
 	"net"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -52,8 +53,13 @@ func handleConn(tcpConn net.Conn) {
 		return
 	}
 
-	go relay(udsConn, tcpConn)
-	go relay(tcpConn, udsConn)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() { defer wg.Done(); relay(udsConn, tcpConn) }()
+	go func() { defer wg.Done(); relay(tcpConn, udsConn) }()
+	wg.Wait()
+	tcpConn.Close()
+	udsConn.Close()
 }
 
 func main() {

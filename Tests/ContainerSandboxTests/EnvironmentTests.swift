@@ -21,17 +21,21 @@ struct ExecEnvironmentTests {
         #expect(!env.contains("FOO=base"))
     }
 
-    @Test func termAlwaysPresent() {
-        let env = SandboxManager.execEnvironment(base: [])
+    @Test func termPresentWhenTTY() {
+        let env = SandboxManager.execEnvironment(base: [], tty: true)
         #expect(env.contains("TERM=xterm-256color"))
     }
 
+    @Test func termAbsentWithoutTTY() {
+        let env = SandboxManager.execEnvironment(base: [])
+        #expect(!env.contains { $0.hasPrefix("TERM=") })
+    }
+
     @Test func extrasOverrideTerm() {
-        // Layer order: base → TERM=xterm-256color → extras → proxy.
-        // Last-writer-wins, so extras should override the hardcoded TERM.
         let env = SandboxManager.execEnvironment(
             base: [],
-            extras: ["TERM=dumb"]
+            extras: ["TERM=dumb"],
+            tty: true
         )
         #expect(env.contains("TERM=dumb"))
         #expect(!env.contains("TERM=xterm-256color"))
@@ -191,18 +195,16 @@ struct ParseWorkspacePathAdversarialTests {
     }
 }
 
-// MARK: - Adversarial: env-layering divergence between execEnvironment and processConfiguration
+// MARK: - TERM injection consistency between exec and run paths
 
-struct EnvLayeringDivergenceTests {
-    @Test func execEnvironmentInjectsTERMButProcessConfigDoesNot() {
-        // execEnvironment hardcodes TERM=xterm-256color between base and extras.
-        // processConfiguration does NOT inject TERM — it comes from template defaults.
-        // This means `exec` and `run` produce different environments for the same inputs.
-        let execEnv = SandboxManager.execEnvironment(base: ["PATH=/usr/bin"])
-        let hasTerm = execEnv.contains { $0.hasPrefix("TERM=") }
-        #expect(hasTerm, "execEnvironment should always include TERM")
+struct TermInjectionTests {
+    @Test func bothPathsInjectTERMForTTY() {
+        // Both execEnvironment (exec path) and processConfiguration (run path)
+        // should inject TERM when TTY is requested, matching Docker's behavior.
+        let execEnv = SandboxManager.execEnvironment(base: ["PATH=/usr/bin"], tty: true)
+        #expect(execEnv.contains { $0.hasPrefix("TERM=") },
+                "exec path should inject TERM for TTY sessions")
 
-        // processConfiguration with a template that has no TERM in defaultEnvironment
         let template = ShellTemplate()
         let config = template.processConfiguration(
             baseConfig: ProcessConfiguration(
@@ -211,12 +213,13 @@ struct EnvLayeringDivergenceTests {
             ),
             workingDirectory: "/tmp"
         )
-        let configHasTerm = config.environment.contains { $0.hasPrefix("TERM=") }
-        // ShellTemplate doesn't set TERM in defaultEnvironment, so it won't appear
-        // unless the base config (image env) already has it
-        if !configHasTerm {
-            // This documents the divergence: exec always has TERM, run might not
-            #expect(!configHasTerm, "processConfiguration does not inject TERM implicitly")
-        }
+        #expect(config.environment.contains { $0.hasPrefix("TERM=") },
+                "run path should inject TERM for TTY sessions")
+    }
+
+    @Test func execPathOmitsTERMWithoutTTY() {
+        let env = SandboxManager.execEnvironment(base: ["PATH=/usr/bin"], tty: false)
+        #expect(!env.contains { $0.hasPrefix("TERM=") },
+                "non-TTY exec should not inject TERM")
     }
 }

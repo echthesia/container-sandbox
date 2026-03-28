@@ -9,12 +9,13 @@ protocol SessionStorage: Sendable {
 }
 
 /// Default filesystem-backed session storage.
+/// Session files live under `~/.local/state/container-sandbox/{containerId}/sessions/`.
 struct FileSessionStorage: SessionStorage {
     private let baseDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".local/state/container-sandbox/sessions")
+        .appendingPathComponent(".local/state/container-sandbox")
 
     private func sessionsDir(for containerId: String) -> URL {
-        baseDir.appendingPathComponent(containerId)
+        baseDir.appendingPathComponent(containerId).appendingPathComponent("sessions")
     }
 
     func createSession(containerId: String, sessionId: String, pid: Int32) throws {

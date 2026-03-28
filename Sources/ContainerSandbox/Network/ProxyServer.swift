@@ -42,11 +42,9 @@ final class ProxyServer: Sendable {
             }
             .childChannelOption(.socketOption(.so_reuseaddr), value: 1)
 
-        // Restrict socket permissions after bind. The TOCTOU window between bind and chmod
-        // is microseconds, and the socket has a unique hash-based name in /tmp — acceptable
-        // tradeoff vs. umask which is process-global and unsafe in concurrent code.
+        // Socket lives inside a 0o700 directory created by ProxyManager — directory
+        // permissions gate access, so no chmod needed here.
         let channel = try await bootstrap.bind(unixDomainSocketPath: socketPath).get()
-        chmod(socketPath, 0o600)
         proxyLog.info("Proxy listening on \(socketPath)")
 
         try await channel.closeFuture.get()
@@ -56,7 +54,7 @@ final class ProxyServer: Sendable {
 // MARK: - CONNECT Proxy Handler
 
 /// Handles HTTP CONNECT requests for HTTPS tunneling and plain HTTP forwarding.
-// NIO channel handlers are confined to their event loop; @unchecked Sendable is standard practice.
+/// NIO channel handlers are confined to their event loop; @unchecked Sendable is standard practice.
 private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannelHandler, @unchecked Sendable {
     typealias InboundIn = HTTPServerRequestPart
     typealias OutboundOut = HTTPServerResponsePart
@@ -72,7 +70,7 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
         let part = unwrapInboundIn(data)
 
         switch part {
-        case .head(let head):
+        case let .head(head):
             requestHead = head
             if head.method == .CONNECT {
                 handleConnect(context: context, head: head)
@@ -99,7 +97,7 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
             // CIDR check happens post-connect on the resolved IP (in establishTunnel)
             // to catch both literal IPs and DNS rebinding to private addresses.
             establishTunnel(context: context, host: host, port: port)
-        case .deny(let reason):
+        case let .deny(reason):
             proxyLog.info("DENY CONNECT \(target): \(reason)")
             sendResponse(context: context, status: .forbidden, body: "Blocked: \(reason)\n")
         }
@@ -121,23 +119,23 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
             .connect(host: host, port: port)
             .whenComplete { result in
                 switch result {
-                case .success(let remoteChannel):
+                case let .success(remoteChannel):
                     // Check resolved IP against blocked CIDRs (catches DNS rebinding).
                     let resolvedIP: String?
                     switch remoteChannel.remoteAddress {
-                    case .v4(let addr): resolvedIP = addr.host
-                    case .v6(let addr): resolvedIP = addr.host
+                    case let .v4(addr): resolvedIP = addr.host
+                    case let .v6(addr): resolvedIP = addr.host
                     default: resolvedIP = nil
                     }
                     if let ip = resolvedIP, self.filter.isBlockedCIDR(ip) {
                         proxyLog.warning("DENY (resolved CIDR) CONNECT \(host):\(port) -> \(ip)")
                         remoteChannel.close(promise: nil)
                         self.sendResponse(context: context, status: .forbidden,
-                            body: "Blocked: resolved to private IP \(ip)\n")
+                                          body: "Blocked: resolved to private IP \(ip)\n")
                         return
                     }
                     self.tunnelEstablished(context: context, remoteChannel: remoteChannel)
-                case .failure(let error):
+                case let .failure(error):
                     proxyLog.error("Failed to connect to \(host):\(port): \(error)")
                     self.sendResponse(context: context, status: .badGateway, body: "Cannot connect to \(host):\(port)\n")
                 }
@@ -209,16 +207,16 @@ private final class ByteRelayHandler: ChannelInboundHandler, RemovableChannelHan
         self.partner = partner
     }
 
-    func channelRead(context: ChannelHandlerContext, data: NIOAny) {
+    func channelRead(context _: ChannelHandlerContext, data: NIOAny) {
         let buffer = unwrapInboundIn(data)
         partner.writeAndFlush(buffer, promise: nil)
     }
 
-    func channelInactive(context: ChannelHandlerContext) {
+    func channelInactive(context _: ChannelHandlerContext) {
         partner.close(promise: nil)
     }
 
-    func errorCaught(context: ChannelHandlerContext, error: Error) {
+    func errorCaught(context: ChannelHandlerContext, error _: Error) {
         context.close(promise: nil)
     }
 }
