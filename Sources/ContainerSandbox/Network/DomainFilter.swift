@@ -4,6 +4,18 @@ import Foundation
 struct DomainFilter {
     let policy: NetworkPolicy
 
+    /// Pre-parsed host entries from allowedHosts/blockedHosts, separated by type.
+    /// IPs are stored in binary form for format-insensitive comparison (e.g. "::1"
+    /// matches "0:0:0:0:0:0:0:1"). Domain patterns stay as strings.
+    private let allowed: ParsedHosts
+    private let blocked: ParsedHosts
+
+    init(policy: NetworkPolicy) {
+        self.policy = policy
+        allowed = Self.parseHosts(policy.allowedHosts)
+        blocked = Self.parseHosts(policy.blockedHosts)
+    }
+
     enum Decision: Equatable {
         case allow
         case deny(reason: String)
@@ -17,14 +29,14 @@ struct DomainFilter {
         }
 
         // Always check blocked hosts first (both directions).
-        if matchesAny(host: host, port: port, patterns: policy.blockedHosts) {
+        if matchesHost(host, port: port, in: blocked) {
             return .deny(reason: "host explicitly blocked: \(host)")
         }
 
         switch policy.direction {
         case .deny:
             // Block by default; only allowed hosts pass.
-            if matchesAny(host: host, port: port, patterns: policy.allowedHosts) {
+            if matchesHost(host, port: port, in: allowed) {
                 return .allow
             }
             return .deny(reason: "host not in allowlist: \(host)")
@@ -59,48 +71,88 @@ struct DomainFilter {
     }
 }
 
-// MARK: - Pattern matching
+// MARK: - Host list parsing and matching
 
 extension DomainFilter {
-    /// Check if `host:port` matches any pattern in the list.
-    ///
-    /// Supported patterns:
-    /// - `example.com` — exact host match, any port
-    /// - `example.com:443` — exact host + port match
-    /// - `*.example.com` — wildcard subdomain match, any port
-    /// - `*.example.com:443` — wildcard subdomain + port match
-    private func matchesAny(host: String, port: Int, patterns: [String]) -> Bool {
+    /// Pre-parsed host entries separated into IPs (binary) and domain patterns (string).
+    private struct ParsedHosts {
+        var domains: [(pattern: String, port: Int?)]
+        var ipv4s: [(addr: UInt32, port: Int?)]
+        var ipv6s: [(addr: [UInt8], port: Int?)]
+
+        static let empty = ParsedHosts(domains: [], ipv4s: [], ipv6s: [])
+    }
+
+    /// Parse host patterns, separating IPs from domain names.
+    /// IP entries are stored as binary (via inet_pton) for format-insensitive matching.
+    private static func parseHosts(_ patterns: [String]) -> ParsedHosts {
+        var result = ParsedHosts.empty
         for rawPattern in patterns {
             var pattern = rawPattern.trimmingCharacters(in: .whitespaces).lowercased()
             while pattern.hasSuffix(".") {
                 pattern = String(pattern.dropLast())
             }
-            if matches(host: host, port: port, pattern: pattern) {
-                return true
+            let (host, port) = parseHostPort(pattern)
+
+            // Try IPv4
+            var sa4 = in_addr()
+            if inet_pton(AF_INET, host, &sa4) == 1 {
+                result.ipv4s.append((UInt32(bigEndian: sa4.s_addr), port))
+                continue
             }
+            // Try IPv6
+            var sa6 = in6_addr()
+            if inet_pton(AF_INET6, host, &sa6) == 1 {
+                result.ipv6s.append((withUnsafeBytes(of: sa6) { Array($0) }, port))
+                continue
+            }
+            // Domain pattern
+            result.domains.append((host, port))
         }
-        return false
+        return result
     }
 
-    private func matches(host: String, port: Int, pattern: String) -> Bool {
-        let (patternHost, patternPort) = parseHostPort(pattern)
-
-        // If pattern specifies a port, it must match.
-        if let pp = patternPort, pp != port {
-            return false
+    /// Match a host against pre-parsed host entries.
+    /// If the host is an IP, matches against IP entries using binary comparison.
+    /// If it's a domain, matches against domain patterns using string comparison.
+    private func matchesHost(_ host: String, port: Int, in hosts: ParsedHosts) -> Bool {
+        // Try as IPv4
+        var sa4 = in_addr()
+        if inet_pton(AF_INET, host, &sa4) == 1 {
+            let addr = UInt32(bigEndian: sa4.s_addr)
+            return hosts.ipv4s.contains { entry in
+                (entry.port == nil || entry.port == port) && entry.addr == addr
+            }
         }
-
-        // Exact match.
-        if patternHost == host {
-            return true
+        // Try as IPv6
+        var sa6 = in6_addr()
+        if inet_pton(AF_INET6, host, &sa6) == 1 {
+            let addr = withUnsafeBytes(of: sa6) { Array($0) }
+            return hosts.ipv6s.contains { entry in
+                (entry.port == nil || entry.port == port) && entry.addr == addr
+            }
         }
+        // Domain matching
+        return matchesDomain(host: host, port: port, patterns: hosts.domains)
+    }
 
-        // Wildcard match: *.example.com matches foo.example.com and bar.foo.example.com.
-        if patternHost.hasPrefix("*.") {
-            let suffix = String(patternHost.dropFirst(1)) // ".example.com"
-            return host.hasSuffix(suffix) && host != String(suffix.dropFirst())
+    /// Match a domain name against domain patterns (exact or wildcard).
+    private func matchesDomain(host: String, port: Int, patterns: [(pattern: String, port: Int?)]) -> Bool {
+        for entry in patterns {
+            // If pattern specifies a port, it must match.
+            if let pp = entry.port, pp != port { continue }
+
+            // Exact match.
+            if entry.pattern == host { return true }
+
+            // Wildcard match: *.example.com matches foo.example.com and bar.foo.example.com.
+            if entry.pattern.hasPrefix("*.") {
+                let suffix = String(entry.pattern.dropFirst(1)) // ".example.com"
+                if host.hasSuffix(suffix) && host != String(suffix.dropFirst()) {
+                    return true
+                }
+            }
         }
-
         return false
     }
 }

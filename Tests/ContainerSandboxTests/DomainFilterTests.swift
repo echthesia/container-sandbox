@@ -81,6 +81,69 @@ struct DomainFilterTests {
         #expect(filter.evaluate(host: "bad.example.com", port: 443) != .allow)
     }
 
+    // MARK: - IP host matching (binary comparison, format-insensitive)
+
+    @Test func ipv4InAllowlist() {
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["10.0.0.1"]))
+        #expect(filter.evaluate(host: "10.0.0.1", port: 443) == .allow)
+        #expect(filter.evaluate(host: "10.0.0.2", port: 443) != .allow)
+    }
+
+    @Test func ipv4InBlocklist() {
+        let policy = NetworkPolicy(
+            direction: .allow,
+            allowedHosts: [],
+            blockedHosts: ["10.0.0.1"],
+            blockedCIDRs: []
+        )
+        let filter = DomainFilter(policy: policy)
+        #expect(filter.evaluate(host: "10.0.0.1", port: 443) != .allow)
+        #expect(filter.evaluate(host: "10.0.0.2", port: 443) == .allow)
+    }
+
+    @Test func ipv6CanonicalMatchesExpanded() {
+        // "::1" in the allowlist should match the expanded form "0:0:0:0:0:0:0:1"
+        // (the format SOCKS5 handler produces). Both parse to the same binary via inet_pton.
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["::1"]))
+        #expect(filter.evaluate(host: "::1", port: 443) == .allow)
+        #expect(filter.evaluate(host: "0:0:0:0:0:0:0:1", port: 443) == .allow)
+        #expect(filter.evaluate(host: "0000:0000:0000:0000:0000:0000:0000:0001", port: 443) == .allow)
+        #expect(filter.evaluate(host: "::2", port: 443) != .allow)
+    }
+
+    @Test func ipv6InBlocklist() {
+        let policy = NetworkPolicy(
+            direction: .allow,
+            allowedHosts: [],
+            blockedHosts: ["::1"],
+            blockedCIDRs: []
+        )
+        let filter = DomainFilter(policy: policy)
+        #expect(filter.evaluate(host: "::1", port: 443) != .allow)
+        #expect(filter.evaluate(host: "0:0:0:0:0:0:0:1", port: 443) != .allow)
+    }
+
+    @Test func ipWithPortInHostList() {
+        // "10.0.0.1:443" should only match on port 443
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["10.0.0.1:443"]))
+        #expect(filter.evaluate(host: "10.0.0.1", port: 443) == .allow)
+        #expect(filter.evaluate(host: "10.0.0.1", port: 80) != .allow)
+    }
+
+    @Test func bracketedIPv6WithPort() {
+        // "[::1]:443" should match ::1 on port 443 only
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["[::1]:443"]))
+        #expect(filter.evaluate(host: "::1", port: 443) == .allow)
+        #expect(filter.evaluate(host: "::1", port: 80) != .allow)
+        #expect(filter.evaluate(host: "0:0:0:0:0:0:0:1", port: 443) == .allow)
+    }
+
+    @Test func ipDoesNotMatchDomainPattern() {
+        // An IP address should not match a domain wildcard
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["*.0.0.1"]))
+        #expect(filter.evaluate(host: "127.0.0.1", port: 443) != .allow)
+    }
+
     // MARK: - CIDR blocking
 
     @Test func ipv4CIDRBlocking() {

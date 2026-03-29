@@ -74,11 +74,15 @@ struct NamingTests {
         #expect(name.contains("café"))
     }
 
-    @Test func veryLongDirectoryName() {
+    @Test func veryLongDirectoryNameTruncated() {
         let longDir = String(repeating: "a", count: 500)
         let name = SandboxNaming.sandboxName(agent: "shell", workspacePath: "/Users/me/Code/\(longDir)")
-        // Should not crash, name includes the full (long) dirname
-        #expect(name.contains(longDir.lowercased()))
+        // Dirname portion is truncated to keep the full name under NAME_MAX (255)
+        let truncated = String(repeating: "a", count: 64)
+        #expect(name.contains("-\(truncated)-"))
+        #expect(!name.contains(longDir))
+        // Full name should be well under 255 characters
+        #expect(name.count < 255)
     }
 
     @Test func hashCollisionResistance() {

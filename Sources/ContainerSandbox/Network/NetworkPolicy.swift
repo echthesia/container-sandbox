@@ -125,17 +125,32 @@ struct NormalizedCIDR: Hashable {
         var sa4 = in_addr()
         if inet_pton(AF_INET, addr, &sa4) == 1 {
             guard prefix >= 0, prefix <= 32 else { return nil }
-            addressBytes = withUnsafeBytes(of: sa4) { Array($0) }
+            addressBytes = Self.masked(bytes: withUnsafeBytes(of: sa4) { Array($0) }, prefixLength: prefix)
             prefixLength = prefix
             return
         }
         var sa6 = in6_addr()
         if inet_pton(AF_INET6, addr, &sa6) == 1 {
             guard prefix >= 0, prefix <= 128 else { return nil }
-            addressBytes = withUnsafeBytes(of: sa6) { Array($0) }
+            addressBytes = Self.masked(bytes: withUnsafeBytes(of: sa6) { Array($0) }, prefixLength: prefix)
             prefixLength = prefix
             return
         }
         return nil
+    }
+
+    /// Zero out host bits beyond the prefix length so that e.g. 10.0.0.1/8 == 10.0.0.0/8.
+    private static func masked(bytes: [UInt8], prefixLength: Int) -> [UInt8] {
+        var result = bytes
+        for i in 0 ..< result.count {
+            let bitOffset = i * 8
+            if bitOffset >= prefixLength {
+                result[i] = 0
+            } else if bitOffset + 8 > prefixLength {
+                let bitsToKeep = prefixLength - bitOffset
+                result[i] &= ~UInt8((1 << (8 - bitsToKeep)) - 1)
+            }
+        }
+        return result
     }
 }

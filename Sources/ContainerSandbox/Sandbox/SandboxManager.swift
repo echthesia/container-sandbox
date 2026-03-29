@@ -326,15 +326,7 @@ struct SandboxManager {
         for entry in ProxyManager.proxyEnvironment {
             envMap.append(entry)
         }
-        var seen = Set<String>()
-        var env: [String] = []
-        for (key, value) in envMap.reversed() {
-            if seen.insert(key).inserted {
-                env.append("\(key)=\(value)")
-            }
-        }
-        env.reverse()
-        return env
+        return deduplicateEnvironment(envMap)
     }
 
     static func resolveWorkspacePath(_ path: String) -> String {

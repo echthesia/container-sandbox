@@ -179,16 +179,21 @@ struct ProxyManager {
     static let proxyPort = 3128
 
     /// Environment variables that direct container traffic through the proxy.
-    /// Only HTTPS_PROXY is set — the proxy handles CONNECT (HTTPS tunneling).
-    /// Plain HTTP is not proxied; adding HTTP forward proxying would let the
-    /// domain filter cover HTTP too, but that's not yet implemented.
-    /// Both uppercase and lowercase variants are set for compatibility (Go,
-    /// wget, Python urllib check lowercase).
+    /// The proxy handles CONNECT (HTTPS tunneling), plain HTTP forwarding,
+    /// and SOCKS5 (arbitrary TCP). Both uppercase and lowercase variants are
+    /// set for compatibility (Go, wget, Python urllib check lowercase).
+    /// ALL_PROXY uses socks5h:// so the proxy resolves DNS, preserving
+    /// domain names for filtering.
     static var proxyEnvironment: [(key: String, value: String)] {
-        let url = "http://127.0.0.1:\(proxyPort)"
+        let httpUrl = "http://127.0.0.1:\(proxyPort)"
+        let socksUrl = "socks5h://127.0.0.1:\(proxyPort)"
         return [
-            ("HTTPS_PROXY", url),
-            ("https_proxy", url),
+            ("HTTPS_PROXY", httpUrl),
+            ("https_proxy", httpUrl),
+            ("HTTP_PROXY", httpUrl),
+            ("http_proxy", httpUrl),
+            ("ALL_PROXY", socksUrl),
+            ("all_proxy", socksUrl),
             ("NO_PROXY", "localhost,127.0.0.1"),
             ("no_proxy", "localhost,127.0.0.1"),
         ]
@@ -213,8 +218,7 @@ struct ProxyManager {
         try stateStorage.ensureStateDirectory(for: name)
 
         let lock = try stateStorage.acquireLock(for: name)
-        _ = lock // Hold lock until end of scope
-        defer { _ = lock }
+        defer { withExtendedLifetime(lock) {} }
 
         let socket = Self.socketPath(for: name)
 

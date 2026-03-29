@@ -64,15 +64,7 @@ extension AgentTemplate {
             envMap.append(entry)
         }
 
-        // Deduplicate: keep last occurrence of each key
-        var seen = Set<String>()
-        var env: [String] = []
-        for (key, value) in envMap.reversed() {
-            if seen.insert(key).inserted {
-                env.append("\(key)=\(value)")
-            }
-        }
-        env.reverse()
+        let env = deduplicateEnvironment(envMap)
 
         var args = entrypoint
         precondition(!args.isEmpty, "AgentTemplate.entrypoint must not be empty")

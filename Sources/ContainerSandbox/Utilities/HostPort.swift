@@ -6,6 +6,20 @@ func parseEnvEntry(_ entry: String) -> (key: String, value: String)? {
     return (String(parts[0]), String(parts[1]))
 }
 
+/// Deduplicate environment variable entries with last-writer-wins semantics.
+/// Returns an array of "KEY=VALUE" strings with only the last occurrence of each key.
+func deduplicateEnvironment(_ envMap: [(key: String, value: String)]) -> [String] {
+    var seen = Set<String>()
+    var env: [String] = []
+    for (key, value) in envMap.reversed() {
+        if seen.insert(key).inserted {
+            env.append("\(key)=\(value)")
+        }
+    }
+    env.reverse()
+    return env
+}
+
 /// Parse a "host:port" string into its components.
 ///
 /// Handles IPv6 brackets (`[::1]:443`), plain `host:port`, and bare hostnames.

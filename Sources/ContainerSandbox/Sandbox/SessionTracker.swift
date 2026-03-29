@@ -67,7 +67,7 @@ struct SessionTracker {
 
     init(
         storage: any SessionStorage = FileSessionStorage(),
-        pidIsAlive: @Sendable @escaping (Int32) -> Bool = { kill($0, 0) == 0 }
+        pidIsAlive: @Sendable @escaping (Int32) -> Bool = { $0 > 0 && kill($0, 0) == 0 }
     ) {
         self.storage = storage
         self.pidIsAlive = pidIsAlive

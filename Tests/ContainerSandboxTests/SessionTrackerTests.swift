@@ -124,34 +124,24 @@ struct FakeSessionTrackerTests {
         #expect(wasLast, "PID 0 should be treated as dead, so no live sessions remain")
     }
 
-    @Test func pidZeroWithDefaultPidIsAliveNeverCleaned() throws {
-        // This documents the actual bug: default pidIsAlive uses kill($0, 0)
-        // and kill(0, 0) succeeds, so PID 0 appears alive
+    @Test func pidZeroWithDefaultPidIsAliveIsDead() throws {
+        // Default pidIsAlive guards pid > 0, so PID 0 is correctly treated as dead
         let storage = FakeSessionStorage()
-        let tracker = SessionTracker(
-            storage: storage,
-            pidIsAlive: { kill($0, 0) == 0 } // default behavior
-        )
+        let tracker = SessionTracker(storage: storage) // uses default closure
 
         try storage.createSession(containerId: "c1", sessionId: "zombie", pid: 0)
         let wasLast = tracker.remove(sessionId: "other", for: "c1")
-        // BUG: PID 0 passes kill(0, 0) check, appears alive, never cleaned
-        // Correct behavior would be wasLast == true
-        #expect(wasLast, "PID 0 should not prevent container stop")
+        #expect(wasLast, "PID 0 should be treated as dead")
     }
 
-    @Test func negativePIDWithDefaultPidIsAlive() throws {
-        // kill(-1, 0) sends to all processes the user can signal — succeeds
+    @Test func negativePIDWithDefaultPidIsAliveIsDead() throws {
+        // Default pidIsAlive guards pid > 0, so negative PIDs are correctly treated as dead
         let storage = FakeSessionStorage()
-        let tracker = SessionTracker(
-            storage: storage,
-            pidIsAlive: { kill($0, 0) == 0 }
-        )
+        let tracker = SessionTracker(storage: storage) // uses default closure
 
         try storage.createSession(containerId: "c1", sessionId: "zombie", pid: -1)
         let wasLast = tracker.remove(sessionId: "other", for: "c1")
-        // BUG: negative PID passes kill check, appears alive
-        #expect(wasLast, "Negative PID should not prevent container stop")
+        #expect(wasLast, "Negative PID should be treated as dead")
     }
 
     // MARK: - Adversarial: error handling

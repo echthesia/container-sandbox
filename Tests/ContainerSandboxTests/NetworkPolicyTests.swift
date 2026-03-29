@@ -95,6 +95,24 @@ struct NetworkPolicyTests {
         #expect(a != b)
     }
 
+    @Test func cidrHostBitsMasked() {
+        // 10.0.0.1/8 and 10.0.0.0/8 represent the same CIDR block
+        let a = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                              blockedCIDRs: ["10.0.0.1/8"])
+        let b = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                              blockedCIDRs: ["10.0.0.0/8"])
+        #expect(a == b)
+    }
+
+    @Test func cidrHostBitsMaskedIPv6() {
+        // fc00::1/7 and fc00::/7 represent the same CIDR block
+        let a = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                              blockedCIDRs: ["fc00::1/7"])
+        let b = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                              blockedCIDRs: ["fc00::/7"])
+        #expect(a == b)
+    }
+
     @Test func differentHostsNotEqual() {
         let a = NetworkPolicy(direction: .deny, allowedHosts: ["a.com"], blockedHosts: [], blockedCIDRs: [])
         let b = NetworkPolicy(direction: .deny, allowedHosts: ["b.com"], blockedHosts: [], blockedCIDRs: [])

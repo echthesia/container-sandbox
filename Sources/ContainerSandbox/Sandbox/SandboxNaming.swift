@@ -28,9 +28,16 @@ enum SandboxNaming {
         }
     }
 
+    /// Maximum length for the dirname portion of a sandbox name.
+    /// Keeps the full name well under NAME_MAX (255) on APFS/HFS+.
+    private static let maxDirnameLength = 64
+
     private static func sanitize(_ name: String) -> String {
         let sanitized = name.unicodeScalars.filter { allowedCharacters.contains($0) }
-        let result = String(String.UnicodeScalarView(sanitized))
+        var result = String(String.UnicodeScalarView(sanitized))
+        if result.count > maxDirnameLength {
+            result = String(result.prefix(maxDirnameLength))
+        }
         return result.isEmpty ? "workspace" : result.lowercased()
     }
 
