@@ -26,6 +26,9 @@ enum SandboxNaming {
         guard !name.isEmpty, name != ".", !name.contains("/"), !name.contains("..") else {
             throw SandboxError.invalidName(name)
         }
+        if AgentRegistry.resolve(name) != nil {
+            throw SandboxError.reservedName(name)
+        }
     }
 
     /// Maximum length for the dirname portion of a sandbox name.

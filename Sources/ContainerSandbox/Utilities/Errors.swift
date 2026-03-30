@@ -13,6 +13,7 @@ enum SandboxError: LocalizedError {
     case notManagedSandbox(String)
     case outdatedSandbox(String)
     case invalidName(String)
+    case reservedName(String)
 
     var errorDescription: String? {
         switch self {
@@ -40,6 +41,8 @@ enum SandboxError: LocalizedError {
             "Sandbox '\(name)' was created with an older version. Run 'sandbox rm \(name)' and recreate it."
         case let .invalidName(name):
             "Invalid sandbox name '\(name)'. Names must not be empty or contain '/' or '..'."
+        case let .reservedName(name):
+            "'\(name)' is a built-in agent template name and cannot be used as a sandbox name."
         }
     }
 }

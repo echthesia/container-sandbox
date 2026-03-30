@@ -262,7 +262,10 @@ struct ProxyManager {
             try await Task.sleep(for: .milliseconds(50))
         }
 
-        // If the socket never appeared, the proxy failed to start.
+        // If the socket never appeared, clean up the launched process and state.
+        launcher.killProcess(pid: pid)
+        stateStorage.removeRuntimeState(for: name)
+
         let logHint = stateStorage.socketExists(path: logPath.path)
             ? " (see \(logPath.path))" : ""
         throw SandboxError.proxyStartFailed("proxy socket not created after 1s\(logHint)")

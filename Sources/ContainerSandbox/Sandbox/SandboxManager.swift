@@ -251,7 +251,10 @@ struct SandboxManager {
         return exitCode
     }
 
-    func stopSandbox(name: String) async throws {
+    /// Stop a sandbox. Returns `true` if a container was actually stopped,
+    /// `false` if it was already gone (stale host state is cleaned up either way).
+    @discardableResult
+    func stopSandbox(name: String) async throws -> Bool {
         // Always clean up host-side resources, even if the container was
         // deleted externally (e.g. via `container rm` instead of `sandbox rm`).
         defer {
@@ -260,15 +263,20 @@ struct SandboxManager {
         }
         guard let snapshot = try await getSandbox(name: name) else {
             // Container already gone — defer handles host-side cleanup.
-            return
+            return false
         }
         guard snapshot.configuration.labels[SandboxLabels.managed] == "true" else {
             throw SandboxError.notManagedSandbox(name)
         }
         try await containers.stop(id: name)
+        return true
     }
 
-    func deleteSandbox(name: String) async throws {
+    /// Delete a sandbox. Returns `true` if a container was actually deleted,
+    /// `false` if it was already gone (stale host state is cleaned up either way).
+    @discardableResult
+    func deleteSandbox(name: String) async throws -> Bool {
+        var found = false
         if let snapshot = try await getSandbox(name: name) {
             guard snapshot.configuration.labels[SandboxLabels.managed] == "true" else {
                 throw SandboxError.notManagedSandbox(name)
@@ -277,11 +285,13 @@ struct SandboxManager {
                 try await containers.stop(id: name)
             }
             try await containers.delete(id: name)
+            found = true
         }
         // Clean up host-side resources after container is gone.
         sessions.clearAll(for: name)
         proxy.stop(name: name)
         proxy.stateStorage.removeAll(for: name)
+        return found
     }
 
     func exportSandbox(name: String, to path: String) async throws {
@@ -298,10 +308,12 @@ struct SandboxManager {
     /// Build a canonical label value for extra workspaces.
     /// Resolves paths, sorts, and joins so reuse checks are order-independent.
     static func extraWorkspacesLabel(_ extras: [String]) -> String {
-        extras.compactMap { input in
+        var seen = Set<String>()
+        return extras.compactMap { input in
             let (path, readOnly) = parseWorkspacePath(input)
             guard !path.isEmpty else { return nil }
             let resolved = resolveWorkspacePath(path)
+            guard seen.insert(resolved).inserted else { return nil }
             return readOnly ? "\(resolved):ro" : resolved
         }.sorted().joined(separator: "\n")
     }

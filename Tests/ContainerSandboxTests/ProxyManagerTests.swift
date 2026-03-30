@@ -65,6 +65,11 @@ struct ProxyManagerTests {
         await #expect(throws: SandboxError.self) {
             try await manager.startIfNeeded(name: "test", policy: .allow)
         }
+
+        // The failed proxy should be killed and its runtime state cleaned up.
+        #expect(launcher.killedPIDs == [1000], "Should kill the launched proxy")
+        #expect(storage.removedNames.contains("test"), "Should remove runtime state")
+        #expect(storage.states["test"] == nil, "Saved state should be cleared")
     }
 
     // MARK: - stop

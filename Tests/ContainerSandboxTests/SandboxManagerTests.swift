@@ -4,17 +4,6 @@ import Foundation
 @testable import sandbox
 import Testing
 
-/// Uses a real temp directory as the workspace so fileExists checks pass.
-private let testWorkspace = FileManager.default.temporaryDirectory.appendingPathComponent("sandbox-test-workspace").path
-
-private struct TestHarness {
-    let manager: SandboxManager
-    let containers: FakeContainerOperations
-    let images: FakeImageOperations
-    let sessions: FakeSessionStorage
-    let proxyStorage: FakeProxyStateStorage
-}
-
 struct SandboxManagerLifecycleTests {
     /// Shared setup: ensure test workspace exists.
     init() {
@@ -30,19 +19,7 @@ struct SandboxManagerLifecycleTests {
         sessions: FakeSessionStorage = FakeSessionStorage(),
         proxyStorage: FakeProxyStateStorage = FakeProxyStateStorage()
     ) -> TestHarness {
-        // Images: agent image + init image both exist by default
-        images.existingImages = ["container-sandbox-claude:latest", "docker.io/ubuntu:24.04", "container-sandbox-init:latest"]
-
-        let sessionTracker = SessionTracker(storage: sessions, pidIsAlive: { _ in false })
-        let proxyManager = ProxyManager(launcher: FakeProxyLauncher(), stateStorage: proxyStorage)
-        let manager = SandboxManager(
-            containers: containers,
-            images: images,
-            kernels: FakeKernelProvider(),
-            sessions: sessionTracker,
-            proxy: proxyManager
-        )
-        return TestHarness(manager: manager, containers: containers, images: images, sessions: sessions, proxyStorage: proxyStorage)
+        TestHarness(containers: containers, images: images, sessions: sessions, proxyStorage: proxyStorage)
     }
 
     // MARK: - ensureSandboxExists: reuse existing
