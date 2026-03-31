@@ -36,11 +36,10 @@ extension AgentTemplate {
         workingDirectory: String,
         extraArgs: [String] = [],
         extraEnv: [String: String] = [:],
-        userOverride: ProcessConfiguration.User? = nil,
-        userConfig: UserConfig = .load()
+        userOverride: ProcessConfiguration.User? = nil
     ) -> ProcessConfiguration {
         // Layer env with last-writer-wins deduplication on key.
-        // Order: image defaults < TERM < template defaults < host passthrough < user config < caller extras
+        // Order: image defaults < TERM (if tty) < template defaults < host passthrough < caller extras
         var envMap: [(key: String, value: String)] = []
 
         for entry in baseConfig.environment {
@@ -58,10 +57,6 @@ extension AgentTemplate {
             if let value = ProcessInfo.processInfo.environment[key] {
                 envMap.append((key, value))
             }
-        }
-        // User config file (~/.config/container-sandbox/config.json).
-        for (key, value) in userConfig.environment(for: name) {
-            envMap.append((key, value))
         }
         for (key, value) in extraEnv {
             envMap.append((key, value))
