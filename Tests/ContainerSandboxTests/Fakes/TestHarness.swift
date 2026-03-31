@@ -4,6 +4,14 @@ import Foundation
 /// Uses a real temp directory as the workspace so fileExists checks pass.
 let testWorkspace = FileManager.default.temporaryDirectory.appendingPathComponent("sandbox-test-workspace").path
 
+/// Fake libexec directory with a proxy-bridge placeholder so preflight checks pass.
+let testLibexecPath: String = {
+    let path = FileManager.default.temporaryDirectory.appendingPathComponent("sandbox-test-libexec").path
+    try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
+    FileManager.default.createFile(atPath: path + "/proxy-bridge", contents: nil)
+    return path
+}()
+
 struct TestHarness {
     let manager: SandboxManager
     let containers: FakeContainerOperations
@@ -19,8 +27,7 @@ struct TestHarness {
         proxyLauncher: FakeProxyLauncher = FakeProxyLauncher(),
         proxyStorage: FakeProxyStateStorage = FakeProxyStateStorage()
     ) {
-        // Images: agent image + init image both exist by default
-        images.existingImages = ["container-sandbox-claude:latest", "docker.io/ubuntu:24.04", "container-sandbox-init:latest"]
+        images.existingImages = ["container-sandbox-claude:latest", "docker.io/ubuntu:24.04"]
 
         let sessionTracker = SessionTracker(storage: sessions, pidIsAlive: { _ in false })
         let proxyManager = ProxyManager(launcher: proxyLauncher, stateStorage: proxyStorage)
@@ -29,7 +36,8 @@ struct TestHarness {
             images: images,
             kernels: FakeKernelProvider(),
             sessions: sessionTracker,
-            proxy: proxyManager
+            proxy: proxyManager,
+            libexecPath: testLibexecPath
         )
         self.containers = containers
         self.images = images

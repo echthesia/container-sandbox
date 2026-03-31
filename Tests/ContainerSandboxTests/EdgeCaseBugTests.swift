@@ -152,14 +152,14 @@ struct SandboxManagerDuplicateMountBugs {
         let images = FakeImageOperations()
         images.existingImages = [
             "container-sandbox-claude:latest", "docker.io/ubuntu:24.04",
-            "container-sandbox-init:latest",
         ]
         let manager = SandboxManager(
             containers: containers,
             images: images,
             kernels: FakeKernelProvider(),
             sessions: SessionTracker(storage: FakeSessionStorage(), pidIsAlive: { _ in false }),
-            proxy: ProxyManager(launcher: FakeProxyLauncher(), stateStorage: FakeProxyStateStorage())
+            proxy: ProxyManager(launcher: FakeProxyLauncher(), stateStorage: FakeProxyStateStorage()),
+            libexecPath: testLibexecPath
         )
         return (manager, containers)
     }
@@ -235,14 +235,14 @@ struct SandboxManagerInputValidationBugs {
         let images = FakeImageOperations()
         images.existingImages = [
             "container-sandbox-claude:latest", "docker.io/ubuntu:24.04",
-            "container-sandbox-init:latest",
         ]
         let manager = SandboxManager(
             containers: containers,
             images: images,
             kernels: FakeKernelProvider(),
             sessions: SessionTracker(storage: FakeSessionStorage(), pidIsAlive: { _ in false }),
-            proxy: ProxyManager(launcher: FakeProxyLauncher(), stateStorage: FakeProxyStateStorage())
+            proxy: ProxyManager(launcher: FakeProxyLauncher(), stateStorage: FakeProxyStateStorage()),
+            libexecPath: testLibexecPath
         )
         return (manager, containers)
     }

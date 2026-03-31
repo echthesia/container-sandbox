@@ -9,15 +9,19 @@ STABLE_DIR = $(HOME)/.local/lib/container-sandbox
 CONTAINER_PREFIX = $(shell brew --prefix container 2>/dev/null)
 PLUGIN_DIR = $(CONTAINER_PREFIX)/libexec/container-plugins/$(PLUGIN_NAME)
 
-INIT_IMAGE_TAG = container-sandbox-init:latest
-
-.PHONY: build install link uninstall clean init-image verify lint test
+.PHONY: build install link uninstall clean proxy-bridge verify lint test
 
 build:
 	swift build $(SWIFT_BUILD_FLAGS)
 
+# Cross-compile proxy-bridge for Linux (mounted into containers via virtiofs)
+proxy-bridge:
+	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o proxy-bridge ./cmd/proxy-bridge
+	mkdir -p "$(STABLE_DIR)/libexec"
+	cp init-image/proxy-bridge "$(STABLE_DIR)/libexec/proxy-bridge"
+
 # Full install: copy binary to stable location + create symlink
-install: build init-image
+install: build proxy-bridge
 	@if [ -z "$(CONTAINER_PREFIX)" ]; then echo "Error: container not installed via Homebrew"; exit 1; fi
 	@echo "Installing to $(STABLE_DIR)"
 	mkdir -p "$(STABLE_DIR)/bin"
@@ -39,13 +43,6 @@ uninstall:
 	rm -f "$(PLUGIN_DIR)"
 	rm -rf "$(STABLE_DIR)"
 
-init-image:
-	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o init-wrapper ./cmd/init-wrapper
-	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o proxy-bridge ./cmd/proxy-bridge
-	container build --tag $(INIT_IMAGE_TAG) \
-		--build-arg VMINIT_TAG=$$(container system property get image.init | sed 's/.*://') \
-		--file init-image/Containerfile init-image/
-
 verify: lint test  ## Run full verification suite
 
 lint:  ## Run SwiftLint
@@ -60,4 +57,4 @@ test:  ## Run hermetic test suite
 
 clean:
 	swift package clean
-	rm -f init-image/init-wrapper init-image/proxy-bridge
+	rm -f init-image/proxy-bridge

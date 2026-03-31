@@ -174,8 +174,8 @@ struct ProxyManager {
         self.stateStorage = stateStorage
     }
 
-    /// Port the proxy bridge listens on inside the VM.
-    /// Must match `listenAddr` in init-image/cmd/proxy-bridge/main.go.
+    /// Port the proxy bridge listens on inside the container.
+    /// Must match `listenAddr` in proxy-bridge (init-image/cmd/proxy-bridge/main.go).
     static let proxyPort = 3128
 
     /// Environment variables that direct container traffic through the proxy.

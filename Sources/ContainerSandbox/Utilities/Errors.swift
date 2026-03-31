@@ -6,7 +6,7 @@ enum SandboxError: LocalizedError {
     case workspaceNotFound(String)
     case imageBuildFailed(String)
     case proxyStartFailed(String)
-    case initImageMissing
+    case proxyBridgeMissing
     case extraWorkspaceMismatch(name: String)
     case workspaceMismatch(name: String, existing: String, requested: String)
     case agentMismatch(name: String, existing: String, requested: String)
@@ -27,8 +27,8 @@ enum SandboxError: LocalizedError {
             "Failed to build sandbox image: \(message)"
         case let .proxyStartFailed(message):
             "Failed to start network proxy: \(message)"
-        case .initImageMissing:
-            "Custom init image 'container-sandbox-init:latest' not found. Run 'make init-image' to build it."
+        case .proxyBridgeMissing:
+            "proxy-bridge binary not found. Run 'make install' to build and install it."
         case let .extraWorkspaceMismatch(name):
             "Sandbox '\(name)' has different extra workspace mounts. Run 'sandbox rm \(name)' to recreate."
         case let .workspaceMismatch(name, existing, requested):

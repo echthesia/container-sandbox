@@ -22,19 +22,22 @@ struct SandboxManager {
     let kernels: any KernelProvider
     let sessions: SessionTracker
     let proxy: ProxyManager
+    let libexecPath: String
 
     init(
         containers: any ContainerOperations = LiveContainerOperations(),
         images: any ImageOperations = LiveImageOperations(),
         kernels: any KernelProvider = LiveKernelProvider(),
         sessions: SessionTracker = SessionTracker(),
-        proxy: ProxyManager = ProxyManager()
+        proxy: ProxyManager = ProxyManager(),
+        libexecPath: String = defaultLibexecPath
     ) {
         self.containers = containers
         self.images = images
         self.kernels = kernels
         self.sessions = sessions
         self.proxy = proxy
+        self.libexecPath = libexecPath
     }
 
     // MARK: - Listing
@@ -125,8 +128,8 @@ struct SandboxManager {
         let imageConfig = try await images.getImageConfig(reference: template.defaultImage, platform: platform)
 
         let initProcess = ProcessConfiguration(
-            executable: "/bin/sleep",
-            arguments: ["infinity"],
+            executable: "/opt/sandbox/proxy-bridge",
+            arguments: [],
             environment: imageConfig?.env ?? [],
             workingDirectory: imageConfig?.workingDir ?? "/",
             user: imageConfig?.user.flatMap { $0.isEmpty ? nil : $0 }.map { ProcessConfiguration.User.raw(userString: $0) } ?? .id(uid: 0, gid: 0)
@@ -156,7 +159,15 @@ struct SandboxManager {
             )
         }
 
-        // Always start proxy and mount its UDS into the VM.
+        // Mount proxy-bridge binary into the container (virtiofs shares directories, not files).
+        guard FileManager.default.fileExists(atPath: libexecPath + "/proxy-bridge") else {
+            throw SandboxError.proxyBridgeMissing
+        }
+        config.mounts.append(
+            .virtiofs(source: libexecPath, destination: "/opt/sandbox", options: ["ro"])
+        )
+
+        // Mount proxy socket into the container.
         // The framework auto-detects socket mounts and relays via vsock (.into direction).
         let socketPath = try await proxy.startIfNeeded(name: name, policy: template.defaultNetworkPolicy)
         config.mounts.append(
@@ -176,14 +187,7 @@ struct SandboxManager {
         config.resources.cpus = ProcessInfo.processInfo.processorCount
         config.resources.memoryInBytes = 8 * 1024 * 1024 * 1024
 
-        // Always use custom init image (contains the proxy bridge).
-        let customInitRef = "container-sandbox-init:latest"
-        guard try await images.imageExists(reference: customInitRef) else {
-            throw SandboxError.initImageMissing
-        }
-        _ = try await images.prepareImage(reference: customInitRef, platform: ContainerizationOCI.Platform.current)
-
-        try await containers.create(configuration: config, options: ContainerCreateOptions.default, kernel: await kernel, initImage: customInitRef)
+        try await containers.create(configuration: config, options: ContainerCreateOptions.default, kernel: await kernel, initImage: nil)
 
         let snapshot = try await containers.get(id: name)
         return (name, snapshot)
@@ -302,6 +306,13 @@ struct SandboxManager {
     func getPolicy(for name: String) throws -> NetworkPolicy? {
         try proxy.stateStorage.loadPolicy(for: name)
     }
+
+    // MARK: - Paths
+
+    /// Default host directory containing helper binaries mounted into containers.
+    /// Must match STABLE_DIR/libexec in the Makefile.
+    static let defaultLibexecPath = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".local/lib/container-sandbox/libexec").path
 
     // MARK: - Utilities
 
