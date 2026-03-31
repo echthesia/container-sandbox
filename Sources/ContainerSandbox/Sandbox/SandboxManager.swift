@@ -13,6 +13,7 @@ enum SandboxLabels {
     static let agent = "sandbox.agent"
     static let workspace = "sandbox.workspace"
     static let extraWorkspaces = "sandbox.extra-workspaces"
+    static let imageUser = "sandbox.image-user"
 }
 
 /// Manages sandbox lifecycle using injectable container, image, and kernel operations.
@@ -176,11 +177,16 @@ struct SandboxManager {
             .virtiofs(source: socketPath, destination: "/run/proxy.sock", options: [])
         )
 
+        // Store the image user so agent processes can run as the correct user
+        // (the init process runs as root for socket access, not the image user).
+        let imageUser = imageConfig?.user.flatMap { $0.isEmpty ? nil : $0 } ?? ""
+
         config.labels = [
             SandboxLabels.managed: "true",
             SandboxLabels.agent: template.name,
             SandboxLabels.workspace: resolvedWorkspace,
             SandboxLabels.extraWorkspaces: Self.extraWorkspacesLabel(extraWorkspaces),
+            SandboxLabels.imageUser: imageUser,
         ]
 
         config.ssh = template.requiresSSH

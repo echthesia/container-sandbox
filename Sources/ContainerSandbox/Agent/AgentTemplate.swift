@@ -29,12 +29,14 @@ extension AgentTemplate {
 
 extension AgentTemplate {
     /// Build a ProcessConfiguration for this agent's entrypoint.
-    /// The `baseConfig` is the container's init process config — we inherit user and base env from it.
+    /// The `baseConfig` is the container's init process config — we inherit base env from it.
+    /// `userOverride` lets callers specify the image user (since the init process runs as root).
     func processConfiguration(
         baseConfig: ProcessConfiguration,
         workingDirectory: String,
         extraArgs: [String] = [],
-        extraEnv: [String: String] = [:]
+        extraEnv: [String: String] = [:],
+        userOverride: ProcessConfiguration.User? = nil
     ) -> ProcessConfiguration {
         // Layer env with last-writer-wins deduplication on key.
         // Order: image defaults < TERM (if tty) < template defaults < host passthrough < caller extras
@@ -78,7 +80,7 @@ extension AgentTemplate {
             environment: env,
             workingDirectory: workingDirectory,
             terminal: true,
-            user: baseConfig.user
+            user: userOverride ?? baseConfig.user
         )
     }
 }

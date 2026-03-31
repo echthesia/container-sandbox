@@ -86,6 +86,13 @@ struct RunCommand: AsyncParsableCommand {
     }
 }
 
+/// Resolve the image user from container labels.
+/// Returns nil if no image user was stored (defaults to init process user).
+private func imageUserFromLabels(_ labels: [String: String]) -> ProcessConfiguration.User? {
+    guard let raw = labels[SandboxLabels.imageUser], !raw.isEmpty else { return nil }
+    return .raw(userString: raw)
+}
+
 func runSandbox(
     agent: String, workspace: String,
     extraWorkspaces: [String] = [], agentArgs: [String] = [],
@@ -108,6 +115,7 @@ func runSandbox(
             env.compactMap { parseEnvEntry($0) },
             uniquingKeysWith: { _, last in last }
         )
+        let imageUser = imageUserFromLabels(labels)
         let config: ProcessConfiguration
         if let agentName = labels[SandboxLabels.agent],
            let savedTemplate = AgentRegistry.resolve(agentName)
@@ -116,7 +124,8 @@ func runSandbox(
                 baseConfig: initConfig,
                 workingDirectory: workDir,
                 extraArgs: agentArgs,
-                extraEnv: extraEnv
+                extraEnv: extraEnv,
+                userOverride: imageUser
             )
         } else {
             config = ProcessConfiguration(
@@ -129,7 +138,7 @@ func runSandbox(
                 ),
                 workingDirectory: workDir,
                 terminal: true,
-                user: initConfig.user
+                user: imageUser ?? initConfig.user
             )
         }
         let exitCode = try await manager.runTracked(name: agent, configuration: config)
@@ -153,7 +162,8 @@ func runSandbox(
         baseConfig: snapshot.configuration.initProcess,
         workingDirectory: SandboxManager.resolveWorkspacePath(workspace),
         extraArgs: agentArgs,
-        extraEnv: extraEnv
+        extraEnv: extraEnv,
+        userOverride: imageUserFromLabels(snapshot.configuration.labels)
     )
 
     let exitCode = try await manager.runTracked(name: sandboxName, configuration: processConfig)
@@ -241,6 +251,7 @@ func execInSandbox(
     try await manager.bootstrapIfNeeded(name: name, snapshot: snapshot)
 
     let initConfig = snapshot.configuration.initProcess
+    let labels = snapshot.configuration.labels
     let config = ProcessConfiguration(
         executable: executable,
         arguments: Array(command.dropFirst()),
@@ -249,9 +260,9 @@ func execInSandbox(
             extras: env,
             tty: tty
         ),
-        workingDirectory: workDir ?? snapshot.configuration.labels[SandboxLabels.workspace] ?? initConfig.workingDirectory,
+        workingDirectory: workDir ?? labels[SandboxLabels.workspace] ?? initConfig.workingDirectory,
         terminal: tty,
-        user: initConfig.user
+        user: imageUserFromLabels(labels) ?? initConfig.user
     )
 
     let exitCode = try await manager.runTracked(name: name, configuration: config)
