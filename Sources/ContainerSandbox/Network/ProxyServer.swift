@@ -5,6 +5,12 @@ import NIOPosix
 
 private let proxyLog = Logger(label: "container-sandbox.proxy")
 
+/// Hop-by-hop headers (RFC 7230 §6.1) stripped when forwarding plain HTTP requests.
+private let hopByHopHeaders: Set<String> = [
+    "proxy-authorization", "proxy-connection", "connection",
+    "te", "keep-alive", "upgrade", "trailer",
+]
+
 /// A multi-protocol proxy that listens on a Unix domain socket.
 /// Supports HTTP CONNECT (HTTPS tunneling), HTTP forward proxying, and SOCKS5.
 /// Filters outbound connections by domain using a DomainFilter.
@@ -253,25 +259,20 @@ final class ProxyServer: Sendable {
         }
 
         // Rewrite the request in origin-form and send to remote.
-        var raw = "\(request.method) \(path) \(request.version)\r\n"
+        var initialToRemote = channel.allocator.buffer(capacity: 512 + overflow.readableBytes)
+        initialToRemote.writeString("\(request.method) \(path) \(request.version)\r\n")
         for (name, value) in request.headers {
-            let lower = name.lowercased()
-            // Strip hop-by-hop (RFC 7230 §6.1) headers.
-            if lower == "proxy-authorization" || lower == "proxy-connection"
-                || lower == "connection" || lower == "te"
-                || lower == "keep-alive" || lower == "upgrade" || lower == "trailer"
-            { continue }
+            if hopByHopHeaders.contains(name.lowercased()) { continue }
             // Sanitize to prevent header injection via embedded CRLF.
-            let sanitized = value.replacingOccurrences(of: "\r", with: "")
-                .replacingOccurrences(of: "\n", with: "")
-            raw += "\(name): \(sanitized)\r\n"
+            if value.contains("\r") || value.contains("\n") {
+                let sanitized = value.replacingOccurrences(of: "\r", with: "")
+                    .replacingOccurrences(of: "\n", with: "")
+                initialToRemote.writeString("\(name): \(sanitized)\r\n")
+            } else {
+                initialToRemote.writeString("\(name): \(value)\r\n")
+            }
         }
-        raw += "Connection: close\r\n\r\n"
-
-        // Send the rewritten request headers + any body bytes that arrived
-        // in the same read as the headers, then relay the rest.
-        var initialToRemote = channel.allocator.buffer(capacity: raw.utf8.count + overflow.readableBytes)
-        initialToRemote.writeString(raw)
+        initialToRemote.writeString("Connection: close\r\n\r\n")
         if overflow.readableBytes > 0 {
             initialToRemote.writeImmutableBuffer(overflow)
         }
@@ -302,7 +303,7 @@ final class ProxyServer: Sendable {
         else { return }
 
         guard version == 0x05 else {
-            try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x01)
+            try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
             return
         }
 
@@ -329,13 +330,13 @@ final class ProxyServer: Sendable {
         else { return }
 
         guard reqVersion == 0x05 else {
-            try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x01)
+            try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
             return
         }
 
         // Only CONNECT (0x01) is supported.
         guard cmd == 0x01 else {
-            try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x07)
+            try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .commandNotSupported)
             return
         }
 
@@ -357,14 +358,14 @@ final class ProxyServer: Sendable {
             try await accumulate(buffer: &buffer, iterator: &iterator, minimum: 5)
             let nameLen = Int(buffer.getInteger(at: reqBase + 4, as: UInt8.self)!)
             guard nameLen > 0 else {
-                try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x01)
+                try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
                 return
             }
             try await accumulate(
                 buffer: &buffer, iterator: &iterator, minimum: 4 + 1 + nameLen + 2
             )
             guard let nameSlice = buffer.getSlice(at: reqBase + 5, length: nameLen) else {
-                try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x01)
+                try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
                 return
             }
             host = String(buffer: nameSlice)
@@ -383,7 +384,7 @@ final class ProxyServer: Sendable {
             addrLen = 16
 
         default:
-            try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x08)
+            try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .addressTypeNotSupported)
             return
         }
 
@@ -405,7 +406,7 @@ final class ProxyServer: Sendable {
             proxyLog.info("ALLOW SOCKS5 CONNECT \(host):\(port)")
         case let .deny(reason):
             proxyLog.info("DENY SOCKS5 CONNECT \(host):\(port): \(reason)")
-            try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x02)
+            try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .notAllowed)
             return
         }
 
@@ -417,7 +418,7 @@ final class ProxyServer: Sendable {
             )
         } catch {
             proxyLog.error("SOCKS5 failed to connect to \(host):\(port): \(error)")
-            try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x05)
+            try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .connectionRefused)
             return
         }
 
@@ -425,19 +426,12 @@ final class ProxyServer: Sendable {
         if let ip = resolvedBlockedIP(channel: remoteChannel.channel, filter: filter) {
             proxyLog.warning("DENY (resolved CIDR) SOCKS5 \(host):\(port) -> \(ip)")
             try? await remoteChannel.channel.close()
-            try await writeSocks5Error(outbound, allocator: channel.allocator, reply: 0x02)
+            try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .notAllowed)
             return
         }
 
         // Send success reply.
-        var reply = channel.allocator.buffer(capacity: 10)
-        reply.writeInteger(UInt8(0x05)) // version
-        reply.writeInteger(UInt8(0x00)) // success
-        reply.writeInteger(UInt8(0x00)) // reserved
-        reply.writeInteger(UInt8(0x01)) // IPv4 address type
-        reply.writeInteger(UInt32(0)) // BND.ADDR 0.0.0.0
-        reply.writeInteger(UInt16(0)) // BND.PORT 0
-        try await outbound.write(reply)
+        try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .success)
 
         // Forward any bytes that arrived after the SOCKS5 request
         // (e.g. a TLS ClientHello pipelined immediately).
@@ -494,6 +488,7 @@ final class ProxyServer: Sendable {
         host: String, port: Int, group: EventLoopGroup
     ) async throws -> NIOAsyncChannel<ByteBuffer, ByteBuffer> {
         try await ClientBootstrap(group: group)
+            .connectTimeout(.seconds(10))
             .connect(host: host, port: port) { channel in
                 channel.eventLoop.makeCompletedFuture {
                     try NIOAsyncChannel<ByteBuffer, ByteBuffer>(
@@ -540,15 +535,15 @@ final class ProxyServer: Sendable {
 
     // MARK: - SOCKS5 Helpers
 
-    /// Write a SOCKS5 error reply and close.
-    private func writeSocks5Error(
+    /// Write a SOCKS5 reply and close.
+    private func writeSocks5Reply(
         _ outbound: NIOAsyncChannelOutboundWriter<ByteBuffer>,
         allocator: ByteBufferAllocator,
-        reply: UInt8
+        reply: Socks5Reply
     ) async throws {
         var buf = allocator.buffer(capacity: 10)
         buf.writeInteger(UInt8(0x05)) // version
-        buf.writeInteger(reply)
+        buf.writeInteger(reply.rawValue)
         buf.writeInteger(UInt8(0x00)) // reserved
         buf.writeInteger(UInt8(0x01)) // IPv4
         buf.writeInteger(UInt32(0)) // 0.0.0.0
@@ -609,12 +604,9 @@ private func findHeaderEnd(in buffer: ByteBuffer) -> Int? {
     let readable = buffer.readableBytes
     guard readable >= 4 else { return nil }
     let base = buffer.readerIndex
+    let marker: UInt32 = 0x0D0A_0D0A // \r\n\r\n
     for i in 0 ... (readable - 4) {
-        if buffer.getInteger(at: base + i, as: UInt8.self) == 0x0D, // \r
-           buffer.getInteger(at: base + i + 1, as: UInt8.self) == 0x0A, // \n
-           buffer.getInteger(at: base + i + 2, as: UInt8.self) == 0x0D, // \r
-           buffer.getInteger(at: base + i + 3, as: UInt8.self) == 0x0A // \n
-        {
+        if buffer.getInteger(at: base + i, endianness: .big, as: UInt32.self) == marker {
             return i
         }
     }
@@ -698,4 +690,14 @@ private enum ProxyError: Error {
     case handshakeTooLarge
     case malformedRequest
     case connectionClosed
+}
+
+/// SOCKS5 reply codes (RFC 1928 §6).
+private enum Socks5Reply: UInt8 {
+    case success = 0x00
+    case generalFailure = 0x01
+    case notAllowed = 0x02
+    case connectionRefused = 0x05
+    case commandNotSupported = 0x07
+    case addressTypeNotSupported = 0x08
 }
