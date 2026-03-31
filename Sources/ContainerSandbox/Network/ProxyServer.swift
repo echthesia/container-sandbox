@@ -212,8 +212,11 @@ private final class ConnectProxyHandler: ChannelInboundHandler, RemovableChannel
 
     /// Tunnel is established — send 200, then switch to raw byte relay.
     private func tunnelEstablished(context: ChannelHandlerContext, remoteChannel: Channel) {
-        // Send 200 Connection Established.
-        let head = HTTPResponseHead(version: .http1_1, status: .ok)
+        // Send 200 Connection Established with content-length: 0 to prevent
+        // HTTPResponseEncoder from adding transfer-encoding: chunked and its
+        // terminator bytes, which would corrupt the subsequent TLS handshake.
+        var head = HTTPResponseHead(version: .http1_1, status: .ok)
+        head.headers.add(name: "content-length", value: "0")
         context.write(wrapOutboundOut(.head(head)), promise: nil)
         context.writeAndFlush(wrapOutboundOut(.end(nil)), promise: nil)
 
