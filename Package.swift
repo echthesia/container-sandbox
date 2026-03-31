@@ -21,7 +21,6 @@ let package = Package(
                 .product(name: "ArgumentParser", package: "swift-argument-parser"),
                 .product(name: "NIOCore", package: "swift-nio"),
                 .product(name: "NIOPosix", package: "swift-nio"),
-                .product(name: "NIOHTTP1", package: "swift-nio"),
             ],
             path: "Sources/ContainerSandbox"
         ),

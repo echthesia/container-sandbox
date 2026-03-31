@@ -77,14 +77,19 @@ struct ProxyServerTests {
             blockedCIDRs: []
         )
 
+        let start = ContinuousClock.now
         let response = try await proxySend(
             policy: policy,
             request:
             "GET http://127.0.0.1:\(echo.port)/test HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\n\r\n"
         )
+        let elapsed = ContinuousClock.now - start
         // The echo server echoes back the re-encoded request. Verify forwarding, not 403.
         #expect(!response.contains("HTTP/1.1 403"))
         #expect(response.contains("GET /test HTTP/1.1"))
+        // The relay must close the client connection when the remote closes.
+        // Without proper teardown, this test blocks for the 3-second read timeout.
+        #expect(elapsed < .seconds(2), "Relay teardown too slow — connection not closing on remote close")
     }
 
     @Test func plainHTTPPostWithBody() async throws {
@@ -99,15 +104,18 @@ struct ProxyServerTests {
         )
 
         let body = "key=value&foo=bar"
+        let start = ContinuousClock.now
         let response = try await proxySend(
             policy: policy,
             request:
             "POST http://127.0.0.1:\(echo.port)/submit HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
         )
+        let elapsed = ContinuousClock.now - start
         #expect(!response.contains("HTTP/1.1 403"))
         #expect(response.contains("POST /submit HTTP/1.1"))
         #expect(response.contains("Content-Length: \(body.utf8.count)"))
         #expect(response.contains(body))
+        #expect(elapsed < .seconds(2), "Relay teardown too slow — connection not closing on remote close")
     }
 
     @Test func plainHTTPBlockedHostReturns403() async throws {
