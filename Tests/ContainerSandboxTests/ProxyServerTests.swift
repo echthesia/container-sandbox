@@ -4,7 +4,7 @@ import NIOPosix
 @testable import sandbox
 import Testing
 
-struct ProxyServerTests {
+@Suite(.serialized) struct ProxyServerTests {
     // MARK: - CONNECT (HTTPS tunneling)
 
     @Test func blockedHostReturns403() async throws {
