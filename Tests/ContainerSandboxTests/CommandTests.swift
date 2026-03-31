@@ -133,12 +133,12 @@ struct PolicyFallbackTests {
         )
 
         let saved = try h.proxyStorage.loadPolicy(for: "my-sandbox")
-        // Should inherit the template's deny direction.
-        #expect(saved?.direction == .deny,
-                "Should fall back to template's default direction (deny)")
-        // Should include both the template's default hosts and the new one.
-        #expect(saved?.allowedHosts.contains("*.claude.ai") == true,
-                "Should inherit template's default allowed hosts")
+        // Should inherit the template's allow direction.
+        #expect(saved?.direction == .allow,
+                "Should fall back to template's default direction (allow)")
+        // Should include the default allowed hosts and the new one.
+        #expect(saved?.allowedHosts.contains("*.anthropic.com") == true,
+                "Should inherit default allowed hosts")
         #expect(saved?.allowedHosts.contains("extra.com") == true,
                 "Should include the newly added host")
     }
