@@ -150,6 +150,43 @@ import Testing
         #expect(response.contains("Blocked"))
     }
 
+    // MARK: - Adversarial: parseAbsoluteURI edge cases
+
+    @Test func plainHTTPWithUserinfoMisparsesAuthority() async throws {
+        // parseAbsoluteURI doesn't handle the userinfo@ delimiter (RFC 3986 §3.2).
+        // A URL like http://user:pass@host/path has authority "user:pass@host".
+        // parseHostPort sees two colons → treats it as bare IPv6 → host becomes
+        // the entire "user:pass@host" string → DNS fails → 502.
+        // The proxy should either strip userinfo and connect to "host", or reject
+        // the request as malformed.
+        let echo = try await EchoServer.start(closeAfterEcho: true)
+        defer { echo.shutdown() }
+
+        let response = try await proxySend(
+            policy: NetworkPolicy(direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: []),
+            request: "GET http://user:pass@127.0.0.1:\(echo.port)/path HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\n\r\n"
+        )
+        // Correct behavior: strip userinfo, forward to 127.0.0.1:port, get echo back.
+        // Actual behavior: misparses host, gets 502 (DNS failure) or connects to wrong host.
+        #expect(response.contains("GET /path HTTP/1.1"),
+                "Proxy should strip userinfo and forward to the real host. Got: \(response.prefix(200))")
+    }
+
+    @Test func plainHTTPUserinfoDoesNotBypassBlocklist() async throws {
+        // An attacker could try http://innocent@blocked.com/path to bypass the
+        // domain filter, since parseAbsoluteURI misparses the authority.
+        let response = try await proxySend(
+            policy: .deny(allowedHosts: ["good.example.com"]),
+            request: "GET http://good.example.com@evil.com/path HTTP/1.1\r\nHost: evil.com\r\n\r\n"
+        )
+        // The request should be blocked because the actual host is evil.com.
+        // With the userinfo bug, the parsed host is "good.example.com@evil.com"
+        // which doesn't match the allowlist → denied. So the bug accidentally
+        // fails safe here. But the error reason will reference the wrong host.
+        #expect(response.contains("HTTP/1.1 403") || response.contains("HTTP/1.1 502"),
+                "Request with userinfo to blocked host should not succeed")
+    }
+
     // MARK: - SOCKS5
 
     @Test func socks5BlockedHostDenied() async throws {

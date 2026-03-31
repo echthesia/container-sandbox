@@ -167,12 +167,9 @@ struct ProxyManagerTests {
         #expect(socket == ProxyManager.socketPath(for: "test"))
     }
 
-    // MARK: - Adversarial: policy not checked on reuse
+    // MARK: - Policy change restarts proxy
 
-    @Test func reusedProxyDoesNotUpdatePolicy() async throws {
-        // startIfNeeded with a running proxy returns the cached socket
-        // WITHOUT writing the new policy. If the caller requests a different
-        // policy, the old (possibly more permissive) policy stays active.
+    @Test func policyChangeRestartsProxy() async throws {
         let launcher = FakeProxyLauncher()
         let storage = FakeProxyStateStorage()
         let manager = ProxyManager(launcher: launcher, stateStorage: storage)
@@ -182,16 +179,13 @@ struct ProxyManagerTests {
         #expect(launcher.launchCount == 1)
         #expect(storage.writtenPolicies["test"] == .allow)
 
-        // Second call — requests deny policy, but proxy is already running
+        // Second call — requests deny policy; proxy should restart with new policy.
         let socket2 = try await manager.startIfNeeded(name: "test", policy: .deny)
-        #expect(socket2 == socket1, "Reuses the same socket")
-
-        // BUG: The policy should have been updated to .deny, but it wasn't.
-        // The proxy is still running with the .allow policy from the first call.
-        // This means a restrictive policy request is silently ignored.
+        #expect(socket2 == socket1, "Reuses the same socket path")
+        #expect(launcher.launchCount == 2, "Should relaunch proxy for policy change")
         #expect(
             storage.writtenPolicies["test"] == .deny,
-            "Policy should be updated when reusing a proxy with a different policy"
+            "Policy should be updated when restarting proxy with a different policy"
         )
     }
 
