@@ -132,7 +132,9 @@ struct SandboxManager {
             arguments: [],
             environment: imageConfig?.env ?? [],
             workingDirectory: imageConfig?.workingDir ?? "/",
-            user: imageConfig?.user.flatMap { $0.isEmpty ? nil : $0 }.map { ProcessConfiguration.User.raw(userString: $0) } ?? .id(uid: 0, gid: 0)
+            // proxy-bridge must run as root to connect to the vsock-relayed socket
+            // (created with mode 0000). Agent processes exec'd later use the image user.
+            user: .id(uid: 0, gid: 0)
         )
 
         var config = ContainerConfiguration(

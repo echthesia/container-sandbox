@@ -480,7 +480,7 @@ struct SandboxManagerLifecycleTests {
         #expect(config.initProcess.environment.contains("LANG=C.UTF-8"))
     }
 
-    @Test func createdContainerUsesImageUser() async throws {
+    @Test func initProcessAlwaysRunsAsRoot() async throws {
         let h = makeManager()
         h.images.imageConfig = ImageConfig(user: "sandbox")
 
@@ -490,11 +490,12 @@ struct SandboxManagerLifecycleTests {
         )
 
         let config = h.containers.createdConfigs[0]
-        // The init process should use the image's USER
-        if case let .raw(userString) = config.initProcess.user {
-            #expect(userString == "sandbox")
-        } else if case let .id(uid, _) = config.initProcess.user {
-            Issue.record("Expected .raw(\"sandbox\") user from image config, got .id(\(uid))")
+        // proxy-bridge must run as root to connect to the vsock-relayed socket (mode 0000).
+        // The image user only applies to agent processes exec'd later.
+        if case let .id(uid, _) = config.initProcess.user {
+            #expect(uid == 0)
+        } else {
+            Issue.record("Expected root (.id(uid: 0)) for init process, got \(config.initProcess.user)")
         }
     }
 
