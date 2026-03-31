@@ -255,11 +255,11 @@ struct SandboxManager {
             exitCode = try await runProcess(name: name, configuration: configuration)
         } catch {
             let wasLast = sessions.remove(sessionId: sessionId, for: name)
-            if wasLast { try? await stopSandbox(name: name) }
+            if wasLast { _ = try? await stopSandbox(name: name) }
             throw error
         }
         let wasLast = sessions.remove(sessionId: sessionId, for: name)
-        if wasLast { try? await stopSandbox(name: name) }
+        if wasLast { _ = try? await stopSandbox(name: name) }
         return exitCode
     }
 
