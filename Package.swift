@@ -4,7 +4,7 @@ import PackageDescription
 
 let package = Package(
     name: "container-sandbox",
-    platforms: [.macOS("15")],
+    platforms: [.macOS("26")],
     dependencies: [
         .package(url: "https://github.com/apple/container.git", from: "0.10.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
