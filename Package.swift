@@ -6,7 +6,7 @@ let package = Package(
     name: "container-sandbox",
     platforms: [.macOS("26")],
     dependencies: [
-        .package(url: "https://github.com/apple/container.git", from: "0.10.0"),
+        .package(url: "https://github.com/apple/container.git", from: "0.11.0"),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.80.0"),
     ],
