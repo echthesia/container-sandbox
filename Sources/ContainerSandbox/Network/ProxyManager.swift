@@ -232,6 +232,12 @@ struct ProxyManager {
                 }
                 // Policy changed — kill the old proxy and start a new one.
                 launcher.killProcess(pid: state.pid)
+                // Briefly wait for the old process to exit so it releases the
+                // socket before we unlink and rebind. 20 × 50ms = 1s budget.
+                for _ in 0 ..< 20 {
+                    if !launcher.isProcessAlive(pid: state.pid) { break }
+                    try? await Task.sleep(for: .milliseconds(50))
+                }
             }
             // Stale or killed — clean up.
             stateStorage.removeSocket(path: state.socketPath)

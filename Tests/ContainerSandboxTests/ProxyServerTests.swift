@@ -64,6 +64,59 @@ import Testing
         #expect(echoed == "hello from proxy test")
     }
 
+    /// A client may pipeline tunneled bytes in the same write as the CONNECT
+    /// header (e.g. a TLS ClientHello appended after the \r\n\r\n). The proxy
+    /// must forward those overflow bytes to the remote, not drop them.
+    @Test func tunnelForwardsPipelinedBytes() async throws {
+        let echo = try await EchoServer.start()
+        defer { echo.shutdown() }
+
+        let policy = NetworkPolicy(
+            direction: .allow,
+            allowedHosts: [],
+            blockedHosts: [],
+            blockedCIDRs: []
+        )
+
+        let socketPath = "/tmp/tp-\(UUID().uuidString).sock"
+        let server = ProxyServer(socketPath: socketPath, filter: DomainFilter(policy: policy))
+        let serverTask = Task { try await server.run() }
+        defer {
+            serverTask.cancel()
+            unlink(socketPath)
+        }
+        try await waitForSocket(socketPath)
+
+        let target = "127.0.0.1:\(echo.port)"
+        let payload = "PIPELINED-PAYLOAD"
+        let pipelinedRequest = "CONNECT \(target) HTTP/1.1\r\nHost: \(target)\r\n\r\n\(payload)"
+
+        let echoed = try await Task.detached {
+            let fd = try connectToUDS(socketPath)
+            defer { close(fd) }
+            setReadTimeout(fd, seconds: 3)
+
+            // Send CONNECT + payload in one write so the overflow lands in the
+            // header parser's buffer.
+            _ = pipelinedRequest.withCString { Darwin.write(fd, $0, pipelinedRequest.utf8.count) }
+
+            // Drain the 200 response, then read whatever echo sends back.
+            var buf = [UInt8](repeating: 0, count: 4096)
+            var combined = ""
+            while combined.count < 256 {
+                let n = Darwin.read(fd, &buf, buf.count)
+                if n <= 0 { break }
+                combined += String(bytes: buf[..<n], encoding: .utf8) ?? ""
+                if combined.contains(payload) { break }
+            }
+            return combined
+        }.value
+
+        #expect(echoed.contains("200"))
+        #expect(echoed.contains(payload),
+                "Proxy dropped bytes pipelined after the CONNECT header. Got: \(echoed)")
+    }
+
     // MARK: - Plain HTTP forward proxy
 
     @Test func plainHTTPForwardedToTarget() async throws {

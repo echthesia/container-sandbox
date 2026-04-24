@@ -112,8 +112,8 @@ final class ProxyServer: Sendable {
 
         if request.method == "CONNECT" {
             try await handleConnect(
-                request: request, iterator: &iterator,
-                outbound: outbound, channel: channel
+                request: request, overflow: buffer,
+                iterator: &iterator, outbound: outbound, channel: channel
             )
         } else {
             try await handleHTTPForward(
@@ -124,8 +124,12 @@ final class ProxyServer: Sendable {
     }
 
     /// Handle CONNECT method — extract host:port, check filter, tunnel or reject.
+    /// `overflow` carries any bytes the client pipelined after the \r\n\r\n
+    /// header terminator (e.g. a TLS ClientHello). Those bytes must be forwarded
+    /// to the remote once the tunnel is established.
     private func handleConnect(
         request: HTTPRequest,
+        overflow: ByteBuffer,
         iterator: inout NIOAsyncChannelInboundStream<ByteBuffer>.AsyncIterator,
         outbound: NIOAsyncChannelOutboundWriter<ByteBuffer>,
         channel: Channel
@@ -179,10 +183,14 @@ final class ProxyServer: Sendable {
         response.writeString("HTTP/1.1 200 Connection Established\r\n\r\n")
         try await outbound.write(response)
 
-        // Switch to bidirectional byte relay.
+        // Switch to bidirectional byte relay. Forward any bytes the client
+        // pipelined after the CONNECT header so a TLS ClientHello attached to
+        // the same write isn't lost.
+        let pipelined: ByteBuffer? = overflow.readableBytes > 0 ? overflow : nil
         try await relay(
             clientIterator: &iterator, clientOutbound: outbound,
-            clientChannel: channel, remoteChannel: remoteChannel
+            clientChannel: channel, remoteChannel: remoteChannel,
+            initialToRemote: pipelined
         )
     }
 
@@ -373,14 +381,13 @@ final class ProxyServer: Sendable {
 
         case 0x04: // IPv6: 16 bytes
             try await accumulate(buffer: &buffer, iterator: &iterator, minimum: 4 + 16 + 2)
-            var parts = [String]()
-            for i in 0 ..< 8 {
-                let word = buffer.getInteger(
-                    at: reqBase + 4 + (i * 2), endianness: .big, as: UInt16.self
-                )!
-                parts.append(String(word, radix: 16))
+            guard let bytes = buffer.getBytes(at: reqBase + 4, length: 16),
+                  let formatted = formatIPv6(bytes)
+            else {
+                try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
+                return
             }
-            host = parts.joined(separator: ":")
+            host = formatted
             addrLen = 16
 
         default:
@@ -521,13 +528,19 @@ final class ProxyServer: Sendable {
     }
 
     /// Parse an absolute-form URI (e.g. "http://host:port/path?query") into components.
+    /// Per RFC 3986 §3.2, authority = [userinfo "@"] host [":" port] — strip
+    /// userinfo before parsing host:port so URIs like "http://user:pass@host/"
+    /// don't cause the entire "user:pass@host" to be treated as the hostname.
     private func parseAbsoluteURI(_ uri: String) -> (host: String, port: Int?, path: String)? {
         guard uri.lowercased().hasPrefix("http://") else { return nil }
         let withoutScheme = String(uri.dropFirst("http://".count))
         let slashIndex = withoutScheme.firstIndex(of: "/") ?? withoutScheme.endIndex
-        let authority = String(withoutScheme[..<slashIndex])
+        var authority = String(withoutScheme[..<slashIndex])
         let path = slashIndex < withoutScheme.endIndex
             ? String(withoutScheme[slashIndex...]) : "/"
+        if let atIndex = authority.lastIndex(of: "@") {
+            authority = String(authority[authority.index(after: atIndex)...])
+        }
         let (host, port) = parseHostPort(authority)
         guard !host.isEmpty else { return nil }
         return (host, port, path)
@@ -666,6 +679,27 @@ private func accumulate(
         }
         buffer.writeImmutableBuffer(next)
     }
+}
+
+// MARK: - IPv6 Formatting
+
+/// Format a 16-byte IPv6 address in canonical form (::1 instead of
+/// 0:0:0:0:0:0:0:1). Uses inet_ntop so zero-compression and IPv4-mapped forms
+/// match what DomainFilter.matchesHost expects.
+private func formatIPv6(_ bytes: [UInt8]) -> String? {
+    guard bytes.count == 16 else { return nil }
+    var addr = in6_addr()
+    withUnsafeMutableBytes(of: &addr) { dst in
+        bytes.withUnsafeBytes { src in dst.copyMemory(from: src) }
+    }
+    var buf = [UInt8](repeating: 0, count: Int(INET6_ADDRSTRLEN))
+    let ok = buf.withUnsafeMutableBufferPointer { ptr -> Bool in
+        ptr.withMemoryRebound(to: CChar.self) { cPtr in
+            inet_ntop(AF_INET6, &addr, cPtr.baseAddress, socklen_t(INET6_ADDRSTRLEN)) != nil
+        }
+    }
+    guard ok, let nulIndex = buf.firstIndex(of: 0) else { return nil }
+    return String(decoding: buf[..<nulIndex], as: UTF8.self)
 }
 
 // MARK: - Shared CIDR Check

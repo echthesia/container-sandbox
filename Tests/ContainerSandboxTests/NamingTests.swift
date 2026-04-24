@@ -68,10 +68,14 @@ struct NamingTests {
         #expect(name.contains("workspace"))
     }
 
-    @Test func unicodeDirectoryNamePreserved() {
-        // CharacterSet.alphanumerics includes Unicode, so "café" should be preserved
+    @Test func unicodeDirectoryNameStrippedToAscii() {
+        // Unicode characters are stripped; sanitize falls back to "workspace" when
+        // no ASCII alphanumerics remain. Sandbox names must be ASCII-only for
+        // portability across OCI runtimes, filesystem encodings, and shells.
         let name = SandboxNaming.sandboxName(agent: "shell", workspacePath: "/Users/me/Code/café")
-        #expect(name.contains("café"))
+        #expect(name.allSatisfy { $0.isASCII })
+        #expect(name.contains("caf"))
+        #expect(!name.contains("é"))
     }
 
     @Test func veryLongDirectoryNameTruncated() {

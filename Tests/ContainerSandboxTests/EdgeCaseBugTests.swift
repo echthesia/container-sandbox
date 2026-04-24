@@ -12,24 +12,24 @@ import Testing
 // MARK: - NetworkPolicy Equality: CIDR normalization gaps
 
 struct NetworkPolicyEqualityBugs {
-    @Test func cidrCaseInsensitiveEquality() {
+    @Test func cidrCaseInsensitiveEquality() throws {
         // normalizedCIDRSet doesn't lowercase the address portion,
         // so "FC00::/7" and "fc00::/7" are treated as different CIDRs
         // despite representing the same network range.
-        let a = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                              blockedCIDRs: ["FC00::/7"])
-        let b = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                              blockedCIDRs: ["fc00::/7"])
+        let a = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                                  blockedCIDRs: [#require(NormalizedCIDR("FC00::/7"))])
+        let b = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                                  blockedCIDRs: [#require(NormalizedCIDR("fc00::/7"))])
         #expect(a == b, "CIDRs should be compared case-insensitively for hex digits")
     }
 
-    @Test func ipv6NormalizationInCidrEquality() {
+    @Test func ipv6NormalizationInCidrEquality() throws {
         // Two string representations of the same IPv6 address are not
         // recognized as equal because normalizedCIDRSet uses string comparison.
-        let a = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                              blockedCIDRs: ["::1/128"])
-        let b = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                              blockedCIDRs: ["0000:0000:0000:0000:0000:0000:0000:0001/128"])
+        let a = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                                  blockedCIDRs: [#require(NormalizedCIDR("::1/128"))])
+        let b = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                                  blockedCIDRs: [#require(NormalizedCIDR("0000:0000:0000:0000:0000:0000:0000:0001/128"))])
         #expect(a == b, "Equivalent IPv6 addresses should be equal in CIDR comparison")
     }
 }
@@ -85,10 +85,10 @@ struct DomainFilterWhitespaceBugs {
                 "Pattern with leading whitespace should still match the host")
     }
 
-    @Test func cidrWithLeadingWhitespaceFailsToBlock() {
+    @Test func cidrWithLeadingWhitespaceFailsToBlock() throws {
         // Leading whitespace makes inet_pton fail, silently disabling the CIDR rule.
-        let policy = NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                   blockedCIDRs: [" 10.0.0.0/8"])
+        let policy = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
+                                       blockedCIDRs: [#require(NormalizedCIDR(" 10.0.0.0/8"))])
         let filter = DomainFilter(policy: policy)
         #expect(filter.isBlockedCIDR("10.0.0.1"),
                 "Leading whitespace in CIDR should not disable the block rule")

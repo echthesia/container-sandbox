@@ -326,14 +326,20 @@ struct SandboxManager {
 
     /// Build a canonical label value for extra workspaces.
     /// Resolves paths, sorts, and joins so reuse checks are order-independent.
+    /// If the same path appears multiple times with different modes, `:ro` wins
+    /// (stricter is safer, and avoids label mismatch from input ordering).
     static func extraWorkspacesLabel(_ extras: [String]) -> String {
-        var seen = Set<String>()
-        return extras.compactMap { input in
+        var modes: [String: Bool] = [:] // resolved path -> readOnly
+        var order: [String] = []
+        for input in extras {
             let (path, readOnly) = parseWorkspacePath(input)
-            guard !path.isEmpty else { return nil }
+            guard !path.isEmpty else { continue }
             let resolved = resolveWorkspacePath(path)
-            guard seen.insert(resolved).inserted else { return nil }
-            return readOnly ? "\(resolved):ro" : resolved
+            if modes[resolved] == nil { order.append(resolved) }
+            modes[resolved] = (modes[resolved] ?? false) || readOnly
+        }
+        return order.map { resolved in
+            (modes[resolved] ?? false) ? "\(resolved):ro" : resolved
         }.sorted().joined(separator: "\n")
     }
 

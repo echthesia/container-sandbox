@@ -230,20 +230,20 @@ struct AdversarialNetworkPolicyTests {
                 "NormalizedCIDR should handle whitespace in IPv6 CIDRs")
     }
 
-    @Test func policyEqualityWithWhitespaceCIDR() {
+    @Test func policyEqualityWithWhitespaceCIDR() throws {
         // A CIDR with whitespace is silently dropped by NormalizedCIDR,
         // making two semantically identical policies unequal.
-        let a = NetworkPolicy(
+        let a = try NetworkPolicy(
             direction: .deny,
             allowedHosts: [],
             blockedHosts: [],
-            blockedCIDRs: [" 10.0.0.0/8"]
+            blockedCIDRs: [#require(NormalizedCIDR(" 10.0.0.0/8"))]
         )
-        let b = NetworkPolicy(
+        let b = try NetworkPolicy(
             direction: .deny,
             allowedHosts: [],
             blockedHosts: [],
-            blockedCIDRs: ["10.0.0.0/8"]
+            blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))]
         )
         #expect(a == b,
                 "Whitespace in CIDR should not break policy equality — the range is identical")
@@ -349,12 +349,13 @@ struct AdversarialPropertyTests {
 
     /// NetworkPolicy JSON roundtrip should preserve equality.
     @Test func networkPolicyJsonRoundtrip() throws {
-        let policies: [NetworkPolicy] = [
+        let policies: [NetworkPolicy] = try [
             .allow,
             .deny,
             .deny(allowedHosts: ["example.com", "*.test.org:8080"]),
             NetworkPolicy(direction: .allow, allowedHosts: ["MIXED.Case.Host"],
-                          blockedHosts: ["blocked.example.com"], blockedCIDRs: ["10.0.0.0/8"]),
+                          blockedHosts: ["blocked.example.com"],
+                          blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))]),
         ]
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()

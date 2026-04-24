@@ -1,3 +1,4 @@
+import Foundation
 @testable import sandbox
 import Testing
 
@@ -391,41 +392,41 @@ struct DomainFilterTests {
 
     // MARK: - Adversarial: CIDR special cases
 
-    @Test func cidrSlashZeroMatchesEverything() {
+    @Test func cidrSlashZeroMatchesEverything() throws {
         // /0 prefix means match all — mask is 0
-        let policy = NetworkPolicy(
+        let policy = try NetworkPolicy(
             direction: .deny,
             allowedHosts: [],
             blockedHosts: [],
-            blockedCIDRs: ["0.0.0.0/0"]
+            blockedCIDRs: [#require(NormalizedCIDR("0.0.0.0/0"))]
         )
         let filter = DomainFilter(policy: policy)
         #expect(filter.isBlockedCIDR("8.8.8.8"))
         #expect(filter.isBlockedCIDR("1.2.3.4"))
     }
 
-    @Test func cidrSlash32ExactMatchOnly() {
-        let policy = NetworkPolicy(
+    @Test func cidrSlash32ExactMatchOnly() throws {
+        let policy = try NetworkPolicy(
             direction: .deny,
             allowedHosts: [],
             blockedHosts: [],
-            blockedCIDRs: ["1.2.3.4/32"]
+            blockedCIDRs: [#require(NormalizedCIDR("1.2.3.4/32"))]
         )
         let filter = DomainFilter(policy: policy)
         #expect(filter.isBlockedCIDR("1.2.3.4"))
         #expect(!filter.isBlockedCIDR("1.2.3.5"))
     }
 
-    @Test func garbageCIDRHandledGracefully() {
-        let policy = NetworkPolicy(
-            direction: .deny,
-            allowedHosts: [],
-            blockedHosts: [],
-            blockedCIDRs: ["not-a-cidr/8", "also garbage", "/32", ""]
-        )
-        let filter = DomainFilter(policy: policy)
-        // Should not crash, should not block anything
-        #expect(!filter.isBlockedCIDR("8.8.8.8"))
+    @Test func garbageCIDRRejectedAtConstructionAndDecode() {
+        // With blockedCIDRs: [NormalizedCIDR], garbage can't enter the policy:
+        // NormalizedCIDR init is failable, and JSON decode wraps that failure.
+        for garbage in ["not-a-cidr/8", "also garbage", "/32", "", "10.0.0.0", "10.0.0.0/33"] {
+            #expect(NormalizedCIDR(garbage) == nil, "Should reject '\(garbage)'")
+        }
+        let json = #"{"direction":"deny","allowedHosts":[],"blockedHosts":[],"blockedCIDRs":["not-a-cidr/8"]}"#
+        #expect(throws: DecodingError.self) {
+            _ = try JSONDecoder().decode(NetworkPolicy.self, from: Data(json.utf8))
+        }
     }
 
     @Test func ipv4MappedHexFormBlocked() {

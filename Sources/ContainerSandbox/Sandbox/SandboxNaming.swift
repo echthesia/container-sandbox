@@ -4,7 +4,7 @@ import Foundation
 enum SandboxNaming {
     static let prefix = "sandbox"
 
-    private static let allowedCharacters = CharacterSet.alphanumerics.union(CharacterSet(charactersIn: "-_."))
+    private static let allowedCharacters = CharacterSet(charactersIn: "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-_.")
 
     /// Generate a sandbox name from agent + full workspace path.
     /// Includes a short hash of the full path to avoid collisions when
