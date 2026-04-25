@@ -23,26 +23,23 @@ struct DomainFilter {
 
     /// Evaluate whether a connection to `host:port` should be allowed.
     func evaluate(host: String, port: Int) -> Decision {
-        var host = host.lowercased()
-        while host.hasSuffix(".") {
-            host = String(host.dropLast())
-        }
+        let host = Self.normalizeHostPattern(host)
+        // Parse the host string once; both list checks below reuse the result
+        // so we don't run inet_pton twice per request in deny mode.
+        let resolved = Self.resolveHost(host)
 
-        // Always check blocked hosts first (both directions).
-        if matchesHost(host, port: port, in: blocked) {
+        if matchesHost(resolved, port: port, in: blocked) {
             return .deny(reason: "host explicitly blocked: \(host)")
         }
 
         switch policy.direction {
         case .deny:
-            // Block by default; only allowed hosts pass.
-            if matchesHost(host, port: port, in: allowed) {
+            if matchesHost(resolved, port: port, in: allowed) {
                 return .allow
             }
             return .deny(reason: "host not in allowlist: \(host)")
 
         case .allow:
-            // Allow by default; only blocked hosts (checked above) are denied.
             return .allow
         }
     }
@@ -51,18 +48,46 @@ struct DomainFilter {
     /// Also detects IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) and checks
     /// the embedded IPv4 against IPv4 CIDRs.
     func isBlockedCIDR(_ ip: String) -> Bool {
-        for cidr in policy.blockedCIDRs where cidr.contains(ip) {
+        // Parse the input once and reuse the bytes across every CIDR check —
+        // the default policy ships with 8 CIDRs, so re-parsing per check would
+        // run inet_pton an order of magnitude more often than necessary.
+        let ipBytes: [UInt8]
+        var sa4 = in_addr()
+        if inet_pton(AF_INET, ip, &sa4) == 1 {
+            ipBytes = withUnsafeBytes(of: sa4) { Array($0) }
+        } else {
+            var sa6 = in6_addr()
+            guard inet_pton(AF_INET6, ip, &sa6) == 1 else { return false }
+            ipBytes = withUnsafeBytes(of: sa6) { Array($0) }
+        }
+
+        for cidr in policy.blockedCIDRs where cidr.contains(bytes: ipBytes) {
             return true
         }
-        // If the address is an IPv4-mapped IPv6 literal, also check the
-        // embedded IPv4 against all CIDRs (catches e.g. ::ffff:10.0.0.5
-        // against 10.0.0.0/8).
-        if let v4 = extractMappedIPv4(ip) {
-            for cidr in policy.blockedCIDRs where cidr.contains(v4) {
+        // IPv4-mapped IPv6 (::ffff:a.b.c.d) — also test the embedded IPv4
+        // bytes against IPv4 CIDRs (catches e.g. ::ffff:10.0.0.5 vs 10.0.0.0/8).
+        if ipBytes.count == 16, Self.mappedIPv4(ipBytes) != nil {
+            let v4Bytes = Array(ipBytes[12 ..< 16])
+            for cidr in policy.blockedCIDRs where cidr.contains(bytes: v4Bytes) {
                 return true
             }
         }
         return false
+    }
+}
+
+// MARK: - Host normalization
+
+extension DomainFilter {
+    /// Canonicalize a host or host-pattern: trim whitespace, lowercase,
+    /// strip trailing dots. Two strings that differ only in these respects
+    /// must compare equal so policy matching and policy equality agree.
+    static func normalizeHostPattern(_ raw: String) -> String {
+        var h = raw.trimmingCharacters(in: .whitespaces).lowercased()
+        while h.hasSuffix(".") {
+            h = String(h.dropLast())
+        }
+        return h
     }
 }
 
@@ -83,10 +108,7 @@ extension DomainFilter {
     private static func parseHosts(_ patterns: [String]) -> ParsedHosts {
         var result = ParsedHosts.empty
         for rawPattern in patterns {
-            var pattern = rawPattern.trimmingCharacters(in: .whitespaces).lowercased()
-            while pattern.hasSuffix(".") {
-                pattern = String(pattern.dropLast())
-            }
+            let pattern = normalizeHostPattern(rawPattern)
             let (host, port) = parseHostPort(pattern)
 
             // Try IPv4
@@ -113,34 +135,46 @@ extension DomainFilter {
         return result
     }
 
-    /// Match a host against pre-parsed host entries.
-    /// If the host is an IP, matches against IP entries using binary comparison.
-    /// If it's a domain, matches against domain patterns using string comparison.
-    private func matchesHost(_ host: String, port: Int, in hosts: ParsedHosts) -> Bool {
-        // Try as IPv4
+    /// Discriminated form of a request host so callers can parse once and
+    /// dispatch many times. IPv4-mapped IPv6 (::ffff:a.b.c.d) is normalized
+    /// at parse time so it matches plain IPv4 entries in either direction
+    /// (RFC 4291 §2.5.5.2).
+    enum ResolvedHost {
+        case ipv4(UInt32)
+        case ipv6(bytes: [UInt8])
+        case domain(String)
+    }
+
+    static func resolveHost(_ host: String) -> ResolvedHost {
         var sa4 = in_addr()
         if inet_pton(AF_INET, host, &sa4) == 1 {
-            let addr = UInt32(bigEndian: sa4.s_addr)
-            return hosts.ipv4s.contains { entry in
-                (entry.port == nil || entry.port == port) && entry.addr == addr
-            }
+            return .ipv4(UInt32(bigEndian: sa4.s_addr))
         }
-        // Try as IPv6. IPv4-mapped addresses are canonicalized to IPv4 so they
-        // match plain IPv4 entries in either direction (RFC 4291 §2.5.5.2).
         var sa6 = in6_addr()
         if inet_pton(AF_INET6, host, &sa6) == 1 {
             let bytes = withUnsafeBytes(of: sa6) { Array($0) }
-            if let v4 = Self.mappedIPv4(bytes) {
-                return hosts.ipv4s.contains { entry in
-                    (entry.port == nil || entry.port == port) && entry.addr == v4
-                }
+            if let v4 = mappedIPv4(bytes) {
+                return .ipv4(v4)
             }
+            return .ipv6(bytes: bytes)
+        }
+        return .domain(host)
+    }
+
+    /// Match a pre-resolved host against pre-parsed host entries.
+    private func matchesHost(_ resolved: ResolvedHost, port: Int, in hosts: ParsedHosts) -> Bool {
+        switch resolved {
+        case let .ipv4(addr):
+            return hosts.ipv4s.contains { entry in
+                (entry.port == nil || entry.port == port) && entry.addr == addr
+            }
+        case let .ipv6(bytes):
             return hosts.ipv6s.contains { entry in
                 (entry.port == nil || entry.port == port) && entry.addr == bytes
             }
+        case let .domain(host):
+            return matchesDomain(host: host, port: port, patterns: hosts.domains)
         }
-        // Domain matching
-        return matchesDomain(host: host, port: port, patterns: hosts.domains)
     }
 
     /// Return the embedded IPv4 (host byte order) if `bytes` is an IPv4-mapped
@@ -171,21 +205,5 @@ extension DomainFilter {
             }
         }
         return false
-    }
-}
-
-// MARK: - IPv4-mapped IPv6 extraction (used by both host and CIDR matching)
-
-extension DomainFilter {
-    /// Check whether an address is an IPv4-mapped IPv6 address (::ffff:x.x.x.x)
-    /// and return the embedded IPv4 string if so.
-    private func extractMappedIPv4(_ ip: String) -> String? {
-        var sa6 = in6_addr()
-        guard inet_pton(AF_INET6, ip, &sa6) == 1 else { return nil }
-        let bytes = withUnsafeBytes(of: sa6) { Array($0) }
-        guard bytes[0 ..< 10].allSatisfy({ $0 == 0 }),
-              bytes[10] == 0xFF, bytes[11] == 0xFF
-        else { return nil }
-        return "\(bytes[12]).\(bytes[13]).\(bytes[14]).\(bytes[15])"
     }
 }

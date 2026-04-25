@@ -78,17 +78,10 @@ extension NetworkPolicy: Equatable {
             && Set(lhs.blockedCIDRs) == Set(rhs.blockedCIDRs)
     }
 
-    /// Normalize hosts the same way DomainFilter.parseHosts does: trim
-    /// whitespace, lowercase, strip trailing dots. Two policies that produce
-    /// identical filter behavior must compare equal.
+    /// Two policies that produce identical filter behavior must compare equal,
+    /// so reuse DomainFilter's canonicalization rather than reimplementing it.
     private static func normalizedSet(_ hosts: [String]) -> Set<String> {
-        Set(hosts.map { raw in
-            var h = raw.trimmingCharacters(in: .whitespaces).lowercased()
-            while h.hasSuffix(".") {
-                h = String(h.dropLast())
-            }
-            return h
-        })
+        Set(hosts.map(DomainFilter.normalizeHostPattern))
     }
 }
 
@@ -98,8 +91,8 @@ extension NetworkPolicy: Equatable {
 /// The address is stored post-masked — host bits beyond the prefix length are
 /// zeroed — so 10.0.0.1/8 is indistinguishable from 10.0.0.0/8.
 struct NormalizedCIDR: Hashable, Codable, CustomStringConvertible {
-    let addressBytes: [UInt8] // 4 bytes for IPv4, 16 for IPv6
-    let prefixLength: Int
+    private let addressBytes: [UInt8] // 4 bytes for IPv4, 16 for IPv6
+    private let prefixLength: Int
 
     init?(_ cidr: String) {
         // Trim whitespace so " 10.0.0.0/8" parses identically to "10.0.0.0/8".
@@ -179,6 +172,14 @@ struct NormalizedCIDR: Hashable, Codable, CustomStringConvertible {
         var sa6 = in6_addr()
         guard inet_pton(AF_INET6, address, &sa6) == 1 else { return false }
         return prefixMatches(withUnsafeBytes(of: sa6) { Array($0) })
+    }
+
+    /// Same as `contains(_:)` but takes a pre-parsed address. Use this when
+    /// checking one address against many CIDRs to avoid re-running inet_pton
+    /// per CIDR (the default policy ships with 8). `bytes.count` selects the
+    /// address family — must be 4 (IPv4) or 16 (IPv6).
+    func contains(bytes: [UInt8]) -> Bool {
+        prefixMatches(bytes)
     }
 
     private func prefixMatches(_ bytes: [UInt8]) -> Bool {
