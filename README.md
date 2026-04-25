@@ -67,7 +67,7 @@ Nested Docker pulls also flow through the proxy: `dockerd` is configured to use 
 
 ## Threat model
 
-The Claude template runs Claude Code with `--dangerously-skip-permissions` — that's the **point** of the sandbox. Trust boundaries are:
+The Claude template runs Claude Code with `--dangerously-skip-permissions`. Trust boundaries are:
 
 - **Host workspace** — mounted via virtiofs; the agent has full read/write inside whatever directories you pass on the command line. Pass `:ro` to mount read-only.
 - **Host filesystem outside the workspace** — not accessible. The init process and proxy run inside the VM.
