@@ -60,8 +60,47 @@ struct ClaudeTemplate: AgentTemplate {
     ENV LANG=en_US.UTF-8
     ENV LC_ALL=en_US.UTF-8
 
-    RUN useradd -m -s /bin/bash -G sudo sandbox \
+    # Docker Engine for nested containers. Each sandbox runs in its own VM,
+    # so dockerd's privileges stay inside that hypervisor boundary.
+    RUN install -m 0755 -d /etc/apt/keyrings \
+        && curl -fsSL https://download.docker.com/linux/ubuntu/gpg -o /etc/apt/keyrings/docker.asc \
+        && chmod a+r /etc/apt/keyrings/docker.asc \
+        && echo "deb [arch=$(dpkg --print-architecture) signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu $(. /etc/os-release && echo "$VERSION_CODENAME") stable" > /etc/apt/sources.list.d/docker.list \
+        && apt-get update && apt-get install -y --no-install-recommends \
+            docker-ce \
+            docker-ce-cli \
+            containerd.io \
+            docker-buildx-plugin \
+            docker-compose-plugin \
+        && rm -rf /var/lib/apt/lists/*
+
+    # dockerd's own image pulls go through proxy-bridge on 127.0.0.1:3128.
+    RUN mkdir -p /etc/docker && printf '%s\n' \
+        '{' \
+        '  "proxies": {' \
+        '    "http-proxy": "http://127.0.0.1:3128",' \
+        '    "https-proxy": "http://127.0.0.1:3128",' \
+        '    "no-proxy": "localhost,127.0.0.1,::1"' \
+        '  }' \
+        '}' > /etc/docker/daemon.json
+
+    RUN useradd -m -s /bin/bash -G sudo,docker sandbox \
         && echo "sandbox ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/sandbox
+
+    # Inject HTTP_PROXY into nested containers via docker's per-user config.
+    # Nested containers reach proxy-bridge through the docker bridge gateway
+    # (172.17.0.1 by default); intra-bridge and loopback traffic skip the proxy.
+    RUN install -d -o sandbox -g sandbox /home/sandbox/.docker && printf '%s\n' \
+        '{' \
+        '  "proxies": {' \
+        '    "default": {' \
+        '      "httpProxy": "http://172.17.0.1:3128",' \
+        '      "httpsProxy": "http://172.17.0.1:3128",' \
+        '      "noProxy": "localhost,127.0.0.1,::1,172.17.0.0/16"' \
+        '    }' \
+        '  }' \
+        '}' > /home/sandbox/.docker/config.json \
+        && chown sandbox:sandbox /home/sandbox/.docker/config.json
 
     RUN git config --system init.defaultBranch main \
         && git config --system safe.directory '*'

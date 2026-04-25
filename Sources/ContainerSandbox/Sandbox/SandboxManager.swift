@@ -128,13 +128,28 @@ struct SandboxManager {
         let imageDesc = try await images.prepareImage(reference: template.defaultImage, platform: platform)
         let imageConfig = try await images.getImageConfig(reference: template.defaultImage, platform: platform)
 
+        // Layer proxy env vars onto the init's environment so dockerd (forked
+        // by sandbox-init) inherits HTTP_PROXY for image pulls. The sandbox
+        // has no vNIC; without these, dockerd's pulls would ENETUNREACH.
+        var initEnvMap: [(key: String, value: String)] = []
+        for entry in imageConfig?.env ?? [] {
+            if let (k, v) = parseEnvEntry(entry) {
+                initEnvMap.append((k, v))
+            }
+        }
+        for entry in ProxyManager.proxyEnvironment {
+            initEnvMap.append(entry)
+        }
+
         let initProcess = ProcessConfiguration(
-            executable: "/opt/sandbox/proxy-bridge",
+            executable: "/opt/sandbox/sandbox-init",
             arguments: [],
-            environment: imageConfig?.env ?? [],
+            environment: deduplicateEnvironment(initEnvMap),
             workingDirectory: imageConfig?.workingDir ?? "/",
-            // proxy-bridge must run as root to connect to the vsock-relayed socket
-            // (created with mode 0000). Agent processes exec'd later use the image user.
+            // sandbox-init starts dockerd (if installed) then runs proxy-bridge.
+            // Both must run as root: proxy-bridge for the mode-0000 vsock socket,
+            // dockerd for cgroup/namespace management. Agent processes exec'd
+            // later run as the image user.
             user: .id(uid: 0, gid: 0)
         )
 
@@ -162,8 +177,11 @@ struct SandboxManager {
             )
         }
 
-        // Mount proxy-bridge binary into the container (virtiofs shares directories, not files).
-        guard FileManager.default.fileExists(atPath: libexecPath + "/proxy-bridge") else {
+        // Mount the libexec directory into the container (virtiofs shares
+        // directories, not individual files). Both binaries must be present.
+        guard FileManager.default.fileExists(atPath: libexecPath + "/proxy-bridge"),
+              FileManager.default.fileExists(atPath: libexecPath + "/sandbox-init")
+        else {
             throw SandboxError.proxyBridgeMissing
         }
         config.mounts.append(

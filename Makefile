@@ -9,19 +9,23 @@ STABLE_DIR = $(HOME)/.local/lib/container-sandbox
 CONTAINER_PREFIX = $(shell brew --prefix container 2>/dev/null)
 PLUGIN_DIR = $(CONTAINER_PREFIX)/libexec/container-plugins/$(PLUGIN_NAME)
 
-.PHONY: build install link uninstall clean proxy-bridge verify lint test
+.PHONY: build install link uninstall clean init-binaries verify lint test
 
 build:
 	swift build $(SWIFT_BUILD_FLAGS)
 
-# Cross-compile proxy-bridge for Linux (mounted into containers via virtiofs)
-proxy-bridge:
+# Cross-compile the in-container helpers for Linux. Both are mounted into
+# containers via virtiofs at /opt/sandbox: sandbox-init is PID 2 (under
+# vminitd), proxy-bridge is the long-running TCP↔UDS relay it manages.
+init-binaries:
 	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o proxy-bridge ./cmd/proxy-bridge
+	cd init-image && CGO_ENABLED=0 GOOS=linux GOARCH=$$(go env GOARCH) go build -o sandbox-init ./cmd/sandbox-init
 	mkdir -p "$(STABLE_DIR)/libexec"
 	cp init-image/proxy-bridge "$(STABLE_DIR)/libexec/proxy-bridge"
+	cp init-image/sandbox-init "$(STABLE_DIR)/libexec/sandbox-init"
 
 # Full install: copy binary to stable location + create symlink
-install: build proxy-bridge
+install: build init-binaries
 	@if [ -z "$(CONTAINER_PREFIX)" ]; then echo "Error: container not installed via Homebrew"; exit 1; fi
 	@echo "Installing to $(STABLE_DIR)"
 	mkdir -p "$(STABLE_DIR)/bin"
@@ -57,4 +61,4 @@ test:  ## Run hermetic test suite
 
 clean:
 	swift package clean
-	rm -f init-image/proxy-bridge
+	rm -f init-image/proxy-bridge init-image/sandbox-init

@@ -14,7 +14,10 @@ import (
 const (
 	proxySocketPath = "/run/proxy.sock"
 	// Port must match ProxyManager.proxyPort in the Swift host code.
-	listenAddr = "127.0.0.1:3128"
+	// Bind on all interfaces so nested containers on the docker bridge can
+	// reach us via the bridge gateway IP. The sandbox VM has no vNIC, so
+	// 0.0.0.0 only exposes us to processes inside this VM.
+	listenAddr = "0.0.0.0:3128"
 	pollTimeout     = 60 * time.Second
 	pollInterval    = 100 * time.Millisecond
 )

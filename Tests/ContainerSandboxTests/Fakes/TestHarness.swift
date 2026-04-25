@@ -4,11 +4,12 @@ import Foundation
 /// Uses a real temp directory as the workspace so fileExists checks pass.
 let testWorkspace = FileManager.default.temporaryDirectory.appendingPathComponent("sandbox-test-workspace").path
 
-/// Fake libexec directory with a proxy-bridge placeholder so preflight checks pass.
+/// Fake libexec directory with proxy-bridge + sandbox-init placeholders so preflight checks pass.
 let testLibexecPath: String = {
     let path = FileManager.default.temporaryDirectory.appendingPathComponent("sandbox-test-libexec").path
     try? FileManager.default.createDirectory(atPath: path, withIntermediateDirectories: true)
     FileManager.default.createFile(atPath: path + "/proxy-bridge", contents: nil)
+    FileManager.default.createFile(atPath: path + "/sandbox-init", contents: nil)
     return path
 }()
 
