@@ -352,6 +352,8 @@ final class ProxyServer: Sendable {
         let host: String
         let addrLen: Int
 
+        // Force unwraps below: preceding accumulate() calls guarantee bytes exist.
+        // swiftlint:disable force_unwrapping
         switch atyp {
         case 0x01: // IPv4: 4 bytes
             try await accumulate(buffer: &buffer, iterator: &iterator, minimum: 4 + 4 + 2)
@@ -394,6 +396,7 @@ final class ProxyServer: Sendable {
             try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .addressTypeNotSupported)
             return
         }
+        // swiftlint:enable force_unwrapping
 
         // Port (2 bytes, big-endian).
         let portOffset = reqBase + 4 + addrLen
@@ -531,6 +534,7 @@ final class ProxyServer: Sendable {
     /// Per RFC 3986 §3.2, authority = [userinfo "@"] host [":" port] — strip
     /// userinfo before parsing host:port so URIs like "http://user:pass@host/"
     /// don't cause the entire "user:pass@host" to be treated as the hostname.
+    // swiftlint:disable:next large_tuple
     private func parseAbsoluteURI(_ uri: String) -> (host: String, port: Int?, path: String)? {
         guard uri.lowercased().hasPrefix("http://") else { return nil }
         let withoutScheme = String(uri.dropFirst("http://".count))
@@ -593,6 +597,8 @@ private func parseHTTPRequest(
     // Accumulate until we find \r\n\r\n marking end of headers.
     while true {
         if let separatorRange = findHeaderEnd(in: buffer) {
+            // findHeaderEnd returns a length within buffer.readableBytes.
+            // swiftlint:disable:next force_unwrapping
             let headerBytes = buffer.readSlice(length: separatorRange)!
             // Skip past the \r\n\r\n separator.
             buffer.moveReaderIndex(forwardBy: 4)
@@ -699,6 +705,7 @@ private func formatIPv6(_ bytes: [UInt8]) -> String? {
         }
     }
     guard ok, let nulIndex = buf.firstIndex(of: 0) else { return nil }
+    // swiftlint:disable:next optional_data_string_conversion
     return String(decoding: buf[..<nulIndex], as: UTF8.self)
 }
 

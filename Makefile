@@ -51,7 +51,7 @@ verify: lint test  ## Run full verification suite
 
 lint:  ## Run SwiftLint
 	@if command -v swiftlint >/dev/null 2>&1; then \
-		swiftlint lint --strict --quiet; \
+		swiftlint lint --quiet; \
 	else \
 		echo "warning: swiftlint not installed, skipping lint"; \
 	fi

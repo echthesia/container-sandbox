@@ -358,6 +358,7 @@ import Testing
             var data: [UInt8] = [0x05, 0x01, 0x00] // valid greeting
             data += [0x04, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50] // bad version in request
             data.withUnsafeBufferPointer { ptr in
+                // swiftlint:disable:next force_unwrapping
                 _ = Darwin.write(fd, ptr.baseAddress!, data.count)
             }
             return try readAllBytes(fd)
@@ -504,6 +505,7 @@ import Testing
             data += [UInt8((port >> 8) & 0xFF), UInt8(port & 0xFF)]
 
             data.withUnsafeBufferPointer { ptr in
+                // swiftlint:disable:next force_unwrapping
                 _ = Darwin.write(fd, ptr.baseAddress!, data.count)
             }
             return try readAllBytes(fd)
@@ -536,6 +538,7 @@ import Testing
             // Send greeting
             let greeting: [UInt8] = [0x05, 0x01, 0x00]
             greeting.withUnsafeBufferPointer { ptr in
+                // swiftlint:disable:next force_unwrapping
                 _ = Darwin.write(fd, ptr.baseAddress!, greeting.count)
             }
 
@@ -561,6 +564,7 @@ import Testing
             request += [UInt8((port >> 8) & 0xFF), UInt8(port & 0xFF)]
 
             request.withUnsafeBufferPointer { ptr in
+                // swiftlint:disable:next force_unwrapping
                 _ = Darwin.write(fd, ptr.baseAddress!, request.count)
             }
 
@@ -695,8 +699,9 @@ private final class EchoHandler: ChannelInboundHandler, @unchecked Sendable {
 
     func channelRead(context: ChannelHandlerContext, data: NIOAny) {
         if closeAfterEcho {
+            let channel = context.channel
             context.writeAndFlush(data).whenComplete { _ in
-                context.close(promise: nil)
+                channel.close(promise: nil)
             }
         } else {
             context.writeAndFlush(data, promise: nil)

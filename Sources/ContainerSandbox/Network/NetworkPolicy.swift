@@ -26,6 +26,7 @@ struct NetworkPolicy: Codable {
     /// Container-internal localhost (127.0.0.1 inside the VM) is unaffected.
     /// Force-unwrapped because these literals are compile-time constants; a bad
     /// entry is a programmer error that should fail loudly at startup.
+    // swiftlint:disable force_unwrapping
     static let defaultBlockedCIDRs: [NormalizedCIDR] = [
         NormalizedCIDR("10.0.0.0/8")!,
         NormalizedCIDR("172.16.0.0/12")!,
@@ -36,6 +37,7 @@ struct NetworkPolicy: Codable {
         NormalizedCIDR("fc00::/7")!,
         NormalizedCIDR("fe80::/10")!,
     ]
+    // swiftlint:enable force_unwrapping
 
     /// Allow all traffic (blocklist mode). Blocks private CIDRs.
     static let allow = NetworkPolicy(
@@ -156,6 +158,7 @@ struct NormalizedCIDR: Hashable, Codable, CustomStringConvertible {
         guard ok, let nul = buf.firstIndex(of: 0) else {
             return "<invalid>/\(prefixLength)"
         }
+        // swiftlint:disable:next optional_data_string_conversion
         return "\(String(decoding: buf[..<nul], as: UTF8.self))/\(prefixLength)"
     }
 
