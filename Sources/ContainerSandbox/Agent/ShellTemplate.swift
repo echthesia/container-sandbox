@@ -1,6 +1,6 @@
 struct ShellTemplate: AgentTemplate {
     let name = "shell"
-    let defaultImage = "docker.io/ubuntu:24.04"
+    let defaultImage = "docker.io/ubuntu:26.04"
 
     let entrypoint = ["/bin/bash"]
 

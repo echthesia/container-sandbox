@@ -27,62 +27,55 @@ struct ClaudeTemplate: AgentTemplate {
     let defaultNetworkPolicy = NetworkPolicy.allow
 
     let containerfileContent: String? = ##"""
-    FROM docker.io/ubuntu:24.04
+    FROM docker.io/ubuntu:26.04
 
     ENV DEBIAN_FRONTEND=noninteractive
 
-    # Base system packages and build tools
     RUN apt-get update && apt-get install -y \
         build-essential \
         ca-certificates \
         curl \
+        dnsutils \
+        gh \
         git \
         gnupg \
         jq \
         less \
         locales \
+        lsof \
+        make \
         openssh-client \
+        procps \
+        psmisc \
+        rsync \
+        socat \
         sudo \
+        unzip \
         vim \
         wget \
         zsh \
         && rm -rf /var/lib/apt/lists/*
 
-    # Locale
     RUN locale-gen en_US.UTF-8
     ENV LANG=en_US.UTF-8
     ENV LC_ALL=en_US.UTF-8
 
-    # Node.js 22 LTS (needed as a runtime for Claude Code)
-    RUN curl -fsSL https://deb.nodesource.com/setup_22.x | bash - \
-        && apt-get install -y nodejs \
-        && rm -rf /var/lib/apt/lists/*
-
-    # Podman (for nested container support, configured for cgroupfs — no systemd needed)
-    RUN apt-get update && apt-get install -y --no-install-recommends \
-        podman \
-        fuse-overlayfs \
-        slirp4netns \
-        uidmap \
-        && rm -rf /var/lib/apt/lists/*
-    RUN mkdir -p /etc/containers && printf '[engine]\ncgroup_manager = "cgroupfs"\nevents_logger = "file"\n' > /etc/containers/containers.conf
-
-    # Non-root sandbox user with passwordless sudo
     RUN useradd -m -s /bin/bash -G sudo sandbox \
         && echo "sandbox ALL=(ALL) NOPASSWD:ALL" >> /etc/sudoers.d/sandbox
 
-    # Git defaults
     RUN git config --system init.defaultBranch main \
         && git config --system safe.directory '*'
+
+    # uv vendored from Astral's official image — pinned, checksum-verified upstream.
+    COPY --from=ghcr.io/astral-sh/uv:0.11.7 /uv /usr/local/bin/uv
 
     USER sandbox
     WORKDIR /home/sandbox
     ENV PATH="/home/sandbox/.local/bin:$PATH"
 
-    # Claude Code (installed as sandbox user via official installer)
-    RUN curl -fsSL https://claude.ai/install.sh | bash
+    # Pre-create state dirs so OCI bind-mounts don't create them root-owned.
+    RUN mkdir -p /home/sandbox/.local/bin /home/sandbox/.local/share /home/sandbox/.local/state
 
-    # uv (Python package manager)
-    RUN curl -LsSf https://astral.sh/uv/install.sh | bash
+    RUN curl -fsSL https://claude.ai/install.sh | bash
     """##
 }

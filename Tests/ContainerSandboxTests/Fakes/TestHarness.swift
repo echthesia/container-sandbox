@@ -27,7 +27,7 @@ struct TestHarness {
         proxyLauncher: FakeProxyLauncher = FakeProxyLauncher(),
         proxyStorage: FakeProxyStateStorage = FakeProxyStateStorage()
     ) {
-        images.existingImages = ["container-sandbox-claude:latest", "docker.io/ubuntu:24.04"]
+        images.existingImages = ["container-sandbox-claude:latest", "docker.io/ubuntu:26.04"]
 
         let sessionTracker = SessionTracker(storage: sessions, pidIsAlive: { _ in false })
         let proxyManager = ProxyManager(launcher: proxyLauncher, stateStorage: proxyStorage)

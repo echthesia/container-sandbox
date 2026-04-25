@@ -151,7 +151,7 @@ struct SandboxManagerDuplicateMountBugs {
         let containers = FakeContainerOperations()
         let images = FakeImageOperations()
         images.existingImages = [
-            "container-sandbox-claude:latest", "docker.io/ubuntu:24.04",
+            "container-sandbox-claude:latest", "docker.io/ubuntu:26.04",
         ]
         let manager = SandboxManager(
             containers: containers,
@@ -234,7 +234,7 @@ struct SandboxManagerInputValidationBugs {
         let containers = FakeContainerOperations()
         let images = FakeImageOperations()
         images.existingImages = [
-            "container-sandbox-claude:latest", "docker.io/ubuntu:24.04",
+            "container-sandbox-claude:latest", "docker.io/ubuntu:26.04",
         ]
         let manager = SandboxManager(
             containers: containers,

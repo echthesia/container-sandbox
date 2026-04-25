@@ -27,7 +27,7 @@ struct ClaudeTemplateTests {
 
     @Test func hasContainerfile() throws {
         #expect(template.containerfileContent != nil)
-        #expect(try #require(template.containerfileContent?.contains("ubuntu:24.04")))
+        #expect(try #require(template.containerfileContent?.contains("ubuntu:26.04")))
         #expect(try #require(template.containerfileContent?.contains("claude.ai/install.sh")))
         #expect(try #require(template.containerfileContent?.contains("sandbox")))
     }
