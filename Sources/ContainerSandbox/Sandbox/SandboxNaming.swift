@@ -27,8 +27,9 @@ enum SandboxNaming {
         let url = URL(fileURLWithPath: workspacePath).standardized
         let agentPart = sanitize(agent, max: maxAgentLength)
         let hash = shortHash(url.path)
-        // Layout: "sandbox-<agent>-<dirname>-<hash>"
-        let fixed = prefix.count + 1 + agentPart.count + 1 + 1 + hash.count
+        // Layout: "sandbox-<agent>-<dirname>-<hash>" — three hyphen separators.
+        let separators = 3
+        let fixed = prefix.utf8.count + agentPart.utf8.count + hash.utf8.count + separators
         let dirnameBudget = max(0, maxNameLength - fixed)
         let dirname = sanitize(url.lastPathComponent, max: dirnameBudget)
         return "\(prefix)-\(agentPart)-\(dirname)-\(hash)"
@@ -56,7 +57,7 @@ enum SandboxNaming {
         guard maxLength > 0 else { return "" }
         let sanitized = name.unicodeScalars.filter { allowedCharacters.contains($0) }
         var result = String(String.UnicodeScalarView(sanitized))
-        if result.count > maxLength {
+        if result.utf8.count > maxLength {
             result = String(result.prefix(maxLength))
         }
         if result.isEmpty {
