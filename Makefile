@@ -31,7 +31,8 @@ install: build init-binaries
 	mkdir -p "$(STABLE_DIR)/bin"
 	cp ".build/$(BUILD_CONFIG)/$(PLUGIN_NAME)" "$(STABLE_DIR)/bin/$(PLUGIN_NAME)"
 	codesign -fs - "$(STABLE_DIR)/bin/$(PLUGIN_NAME)"
-	cp Plugin/config.json "$(STABLE_DIR)/config.json"
+	cp Plugin/config.toml "$(STABLE_DIR)/config.toml"
+	rm -f "$(STABLE_DIR)/config.json"
 	$(MAKE) link
 	@echo "Done. Run 'container sandbox --help' to verify."
 

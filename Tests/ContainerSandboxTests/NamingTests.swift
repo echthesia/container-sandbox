@@ -81,12 +81,29 @@ struct NamingTests {
     @Test func veryLongDirectoryNameTruncated() {
         let longDir = String(repeating: "a", count: 500)
         let name = SandboxNaming.sandboxName(agent: "shell", workspacePath: "/Users/me/Code/\(longDir)")
-        // Dirname portion is truncated to keep the full name under NAME_MAX (255)
-        let truncated = String(repeating: "a", count: 64)
-        #expect(name.contains("-\(truncated)-"))
+        // Dirname is truncated so the full name fits the relay-socket staging-path
+        // limit: id ≤ 42 chars keeps `/run/container/<id>/sockets/<UUID>.sock`
+        // under Linux's 108-byte sun_path limit.
+        #expect(name.count <= SandboxNaming.maxNameLength)
         #expect(!name.contains(longDir))
-        // Full name should be well under 255 characters
-        #expect(name.count < 255)
+        #expect(name.hasPrefix("sandbox-shell-"))
+    }
+
+    @Test func longNameRespectsRelaySocketBudget() {
+        // Worst-case: 200-char workspace basename, 6-char agent name. Result
+        // must still fit so the in-guest socket relay can bind.
+        let name = SandboxNaming.sandboxName(
+            agent: "claude",
+            workspacePath: "/x/" + String(repeating: "z", count: 200)
+        )
+        #expect(name.count <= SandboxNaming.maxNameLength)
+    }
+
+    @Test func validateNameRejectsOverlongNames() {
+        let tooLong = "sandbox-claude-" + String(repeating: "x", count: 100)
+        #expect(throws: SandboxError.self) {
+            try SandboxNaming.validateName(tooLong)
+        }
     }
 
     @Test func hashCollisionResistance() {

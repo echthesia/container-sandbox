@@ -13,6 +13,7 @@ enum SandboxError: LocalizedError {
     case notManagedSandbox(String)
     case outdatedSandbox(String)
     case invalidName(String)
+    case nameTooLong(name: String, limit: Int)
     case reservedName(String)
 
     var errorDescription: String? {
@@ -41,6 +42,8 @@ enum SandboxError: LocalizedError {
             "Sandbox '\(name)' was created with an older version. Run 'sandbox rm \(name)' and recreate it."
         case let .invalidName(name):
             "Invalid sandbox name '\(name)'. Names must not be empty or contain '/' or '..'."
+        case let .nameTooLong(name, limit):
+            "Sandbox name '\(name)' is \(name.utf8.count) bytes; must be at most \(limit) (constrained by the in-guest socket relay path)."
         case let .reservedName(name):
             "'\(name)' is a built-in agent template name and cannot be used as a sandbox name."
         }
