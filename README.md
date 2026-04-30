@@ -19,8 +19,7 @@ Each sandbox is a Linux VM with the agent installed, a per-sandbox HTTP/SOCKS5 p
 
 For development:
 
-- [SwiftLint](https://github.com/realm/SwiftLint) (`brew install swiftlint`) — `make verify` runs lint + tests
-- [SwiftFormat](https://github.com/nicklockwood/SwiftFormat) (`brew install swiftformat`) — used by the post-write hook in `.claude/settings.json` to auto-format on edit
+- `swift format` — bundled with the Swift 6 toolchain, no separate install. Config (`.swift-format`) matches upstream apple/container. `make verify` runs `swift format lint --strict` + tests; `make format` applies in place. The post-write hook in `.claude/settings.json` auto-formats Swift files on edit.
 
 ## Install
 
@@ -88,7 +87,8 @@ This is a sandbox, not an air gap. An agent inside can still consume API quota, 
 
 ```sh
 make build        # release build of the Swift CLI
-make verify       # swiftlint (advisory) + swift test
+make verify       # swift format lint --strict + swift test
+make format       # apply swift format in place
 make init-binaries # cross-compile the Go helpers for Linux
 swift test        # native Swift Testing framework, hermetic
 ```

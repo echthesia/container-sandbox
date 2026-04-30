@@ -25,7 +25,7 @@ PACKAGE_TGZ = $(DIST_DIR)/$(PACKAGE_NAME).tar.gz
 SIGN_IDENTITY ?= -
 NOTARY_PROFILE ?=
 
-.PHONY: build install link uninstall clean init-binaries verify lint test package
+.PHONY: build install link uninstall clean init-binaries verify lint format test package
 
 build:
 	swift build $(SWIFT_BUILD_FLAGS)
@@ -95,12 +95,11 @@ uninstall:
 
 verify: lint test  ## Run full verification suite
 
-lint:  ## Run SwiftLint
-	@if command -v swiftlint >/dev/null 2>&1; then \
-		swiftlint lint --quiet; \
-	else \
-		echo "warning: swiftlint not installed, skipping lint"; \
-	fi
+lint:  ## Strict lint pass — uses the more permissive .swift-format-nolint subset
+	swift format lint --recursive --strict --configuration .swift-format-nolint Sources Tests
+
+format:  ## Apply formatting in-place
+	swift format --recursive --in-place --configuration .swift-format Sources Tests
 
 test:  ## Run hermetic test suite
 	swift test

@@ -16,7 +16,8 @@ A Swift CLI plugin for Apple's Container framework that creates isolated sandbox
 make build          # swift build -c release
 make init-binaries  # cross-compile Linux helpers (proxy-bridge, sandbox-init)
 make install        # build + init-binaries + codesign + symlink into container plugin dir
-make verify         # swiftlint + swift test
+make verify         # swift format lint --strict + swift test
+make format         # apply swift format in place
 make clean          # swift package clean + remove init-image binaries
 ```
 
