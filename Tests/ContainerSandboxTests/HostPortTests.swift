@@ -173,4 +173,47 @@ struct ParseEnvEntryTests {
         #expect(result?.key == "KEY")
         #expect(result?.value == "val\0ue")
     }
+
+    /// parseEnvEntry roundtrip: if it succeeds, reconstructing the string
+    /// and re-parsing should yield the same result.
+    @Test func parseEnvEntryRoundtrip() {
+        let entries = ["KEY=value", "A=", "FOO=bar=baz", "X=a b c", "EMPTY="]
+        for entry in entries {
+            guard let (key, value) = parseEnvEntry(entry) else {
+                Issue.record("parseEnvEntry should succeed for '\(entry)'")
+                continue
+            }
+            let reconstructed = "\(key)=\(value)"
+            let reparsed = parseEnvEntry(reconstructed)
+            #expect(
+                reparsed?.key == key && reparsed?.value == value,
+                "Roundtrip failed for '\(entry)': reconstructed '\(reconstructed)' parsed to \(String(describing: reparsed))")
+        }
+    }
+}
+
+// MARK: - parseHostPort whitespace regressions
+
+struct ParseHostPortWhitespaceBugs {
+    @Test func trailingWhitespaceBreaksPortParsing() {
+        // Int("443 ") returns nil because of the trailing space,
+        // so the port is silently lost.
+        let (host, port) = parseHostPort("host:443 ")
+        #expect(host == "host")
+        #expect(port == 443, "Trailing space should not break port parsing")
+    }
+
+    @Test func leadingWhitespacePreservedInHostname() {
+        // The leading space becomes part of the hostname, so " host"
+        // won't match "host" in domain filter comparisons.
+        let (host, port) = parseHostPort(" host:443")
+        #expect(host == "host", "Leading whitespace should be trimmed from hostname")
+        #expect(port == 443)
+    }
+
+    @Test func tabCharacterPreservedInHostname() {
+        // Tab before the colon becomes part of the hostname.
+        let (host, _) = parseHostPort("host\t:443")
+        #expect(host == "host", "Tab character should be trimmed from hostname")
+    }
 }

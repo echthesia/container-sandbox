@@ -138,3 +138,203 @@ struct NetworkPolicyTests {
         #expect(decoded == original, "Equality should still hold")
     }
 }
+
+// MARK: - Adversarial: equality normalization gaps
+
+struct AdversarialNetworkPolicyTests {
+    // Bug #4: normalizedSet only lowercases hosts, doesn't strip trailing dots.
+    // DomainFilter.parseHosts normalizes trailing dots, so "example.com." and
+    // "example.com" produce identical filter behavior. But NetworkPolicy equality
+    // treats them as different.
+
+    @Test func equalityWithTrailingDotInAllowedHosts() {
+        let a = NetworkPolicy(
+            direction: .deny,
+            allowedHosts: ["example.com."],
+            blockedHosts: [],
+            blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
+        )
+        let b = NetworkPolicy(
+            direction: .deny,
+            allowedHosts: ["example.com"],
+            blockedHosts: [],
+            blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
+        )
+        #expect(
+            a == b,
+            "Trailing dot should not affect host equality — 'example.com.' and 'example.com' are the same DNS name")
+    }
+
+    @Test func equalityWithTrailingDotInBlockedHosts() {
+        let a = NetworkPolicy(
+            direction: .allow,
+            allowedHosts: [],
+            blockedHosts: ["evil.com."],
+            blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
+        )
+        let b = NetworkPolicy(
+            direction: .allow,
+            allowedHosts: [],
+            blockedHosts: ["evil.com"],
+            blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
+        )
+        #expect(
+            a == b,
+            "Trailing dot in blockedHosts should not break equality")
+    }
+
+    /// Bug #5: normalizedSet doesn't trim whitespace.
+    @Test func equalityWithWhitespaceInHosts() {
+        let a = NetworkPolicy(
+            direction: .deny,
+            allowedHosts: [" example.com"],
+            blockedHosts: [],
+            blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
+        )
+        let b = NetworkPolicy(
+            direction: .deny,
+            allowedHosts: ["example.com"],
+            blockedHosts: [],
+            blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
+        )
+        #expect(
+            a == b,
+            "Leading whitespace should not affect host equality — DomainFilter.parseHosts trims whitespace")
+    }
+
+    @Test func equalityWithTrailingWhitespaceInHosts() {
+        let a = NetworkPolicy(
+            direction: .deny,
+            allowedHosts: ["example.com "],
+            blockedHosts: [],
+            blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
+        )
+        let b = NetworkPolicy(
+            direction: .deny,
+            allowedHosts: ["example.com"],
+            blockedHosts: [],
+            blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
+        )
+        #expect(
+            a == b,
+            "Trailing whitespace should not affect host equality")
+    }
+
+    // Bug #6: NormalizedCIDR fails to parse CIDRs with whitespace because
+    // inet_pton rejects leading/trailing whitespace.
+
+    @Test func normalizedCIDRWithLeadingWhitespace() {
+        let cidr = NormalizedCIDR(" 10.0.0.0/8")
+        #expect(
+            cidr != nil,
+            "NormalizedCIDR should handle leading whitespace — inet_pton rejects it, causing silent CIDR drop")
+    }
+
+    @Test func normalizedCIDRWithTrailingWhitespace() {
+        let cidr = NormalizedCIDR("10.0.0.0/8 ")
+        #expect(
+            cidr != nil,
+            "NormalizedCIDR should handle trailing whitespace")
+    }
+
+    @Test func normalizedCIDRWithWhitespaceIPv6() {
+        let cidr = NormalizedCIDR(" fc00::/7")
+        #expect(
+            cidr != nil,
+            "NormalizedCIDR should handle whitespace in IPv6 CIDRs")
+    }
+
+    @Test func policyEqualityWithWhitespaceCIDR() throws {
+        // A CIDR with whitespace is silently dropped by NormalizedCIDR,
+        // making two semantically identical policies unequal.
+        let a = try NetworkPolicy(
+            direction: .deny,
+            allowedHosts: [],
+            blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR(" 10.0.0.0/8"))]
+        )
+        let b = try NetworkPolicy(
+            direction: .deny,
+            allowedHosts: [],
+            blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))]
+        )
+        #expect(
+            a == b,
+            "Whitespace in CIDR should not break policy equality — the range is identical")
+    }
+
+    /// Bug #10: init(from decoder:) rejects whitespace CIDRs via NormalizedCIDR
+    /// validation, even though isBlockedCIDR handles whitespace at runtime.
+    @Test func decodePolicyWithWhitespaceCIDR() throws {
+        let json = """
+            {
+                "direction": "deny",
+                "allowedHosts": [],
+                "blockedHosts": [],
+                "blockedCIDRs": [" 10.0.0.0/8"]
+            }
+            """
+        let data = Data(json.utf8)
+        // This should succeed — the CIDR is valid, just has whitespace.
+        // But NormalizedCIDR(" 10.0.0.0/8") returns nil, causing decode to throw.
+        #expect(throws: Never.self) {
+            _ = try JSONDecoder().decode(NetworkPolicy.self, from: data)
+        }
+    }
+}
+
+// MARK: - CIDR equality regressions
+
+struct NetworkPolicyEqualityBugs {
+    @Test func cidrCaseInsensitiveEquality() throws {
+        // normalizedCIDRSet doesn't lowercase the address portion,
+        // so "FC00::/7" and "fc00::/7" are treated as different CIDRs
+        // despite representing the same network range.
+        let a = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("FC00::/7"))])
+        let b = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("fc00::/7"))])
+        #expect(a == b, "CIDRs should be compared case-insensitively for hex digits")
+    }
+
+    @Test func ipv6NormalizationInCidrEquality() throws {
+        // Two string representations of the same IPv6 address are not
+        // recognized as equal because normalizedCIDRSet uses string comparison.
+        let a = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("::1/128"))])
+        let b = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("0000:0000:0000:0000:0000:0000:0000:0001/128"))])
+        #expect(a == b, "Equivalent IPv6 addresses should be equal in CIDR comparison")
+    }
+}
+
+// MARK: - JSON roundtrip
+
+struct NetworkPolicyRoundtripTests {
+    /// NetworkPolicy JSON roundtrip should preserve equality.
+    @Test func networkPolicyJsonRoundtrip() throws {
+        let policies: [NetworkPolicy] = try [
+            .allow,
+            .deny,
+            .deny(allowedHosts: ["example.com", "*.test.org:8080"]),
+            NetworkPolicy(
+                direction: .allow, allowedHosts: ["MIXED.Case.Host"],
+                blockedHosts: ["blocked.example.com"],
+                blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))]),
+        ]
+        let encoder = JSONEncoder()
+        let decoder = JSONDecoder()
+        for policy in policies {
+            let data = try encoder.encode(policy)
+            let decoded = try decoder.decode(NetworkPolicy.self, from: data)
+            #expect(
+                policy == decoded,
+                "NetworkPolicy should survive JSON roundtrip")
+        }
+    }
+}

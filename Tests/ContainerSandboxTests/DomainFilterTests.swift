@@ -450,3 +450,152 @@ struct DomainFilterTests {
         #expect(!filter.isBlockedCIDR("::2"))
     }
 }
+
+// MARK: - Adversarial: IPv4-mapped IPv6 cross-family matching
+
+struct AdversarialDomainFilterTests {
+    // Bug #2: matchesHost has separate IPv4 and IPv6 code paths with no
+    // cross-family matching. An IPv4-mapped IPv6 address (::ffff:x.x.x.x)
+    // in the host lists is stored as IPv6 binary, but a plain IPv4 host
+    // is parsed as IPv4 binary. They never compare against each other.
+
+    @Test func ipv4MappedIPv6InBlocklistShouldBlockPlainIPv4() {
+        // ::ffff:10.0.0.1 and 10.0.0.1 are the same address (RFC 4291 §2.5.5.2).
+        let policy = NetworkPolicy(
+            direction: .allow,
+            allowedHosts: [],
+            blockedHosts: ["::ffff:10.0.0.1"],
+            blockedCIDRs: []
+        )
+        let filter = DomainFilter(policy: policy)
+        let decision = filter.evaluate(host: "10.0.0.1", port: 443)
+        #expect(
+            decision != .allow,
+            "IPv4-mapped IPv6 '::ffff:10.0.0.1' in blocklist should block plain IPv4 '10.0.0.1'")
+    }
+
+    /// Bug #3: Reverse direction of bug #2.
+    @Test func plainIPv4InBlocklistShouldBlockIPv4MappedIPv6() {
+        let policy = NetworkPolicy(
+            direction: .allow,
+            allowedHosts: [],
+            blockedHosts: ["10.0.0.1"],
+            blockedCIDRs: []
+        )
+        let filter = DomainFilter(policy: policy)
+        let decision = filter.evaluate(host: "::ffff:10.0.0.1", port: 443)
+        #expect(
+            decision != .allow,
+            "Plain IPv4 '10.0.0.1' in blocklist should block IPv4-mapped IPv6 '::ffff:10.0.0.1'")
+    }
+
+    @Test func ipv4MappedIPv6InAllowlistShouldAllowPlainIPv4() {
+        // In deny mode, the allowlist should recognize IPv4-mapped addresses.
+        let policy = NetworkPolicy(
+            direction: .deny,
+            allowedHosts: ["::ffff:93.184.216.34"],
+            blockedHosts: [],
+            blockedCIDRs: []
+        )
+        let filter = DomainFilter(policy: policy)
+        let decision = filter.evaluate(host: "93.184.216.34", port: 443)
+        #expect(
+            decision == .allow,
+            "IPv4-mapped IPv6 in allowlist should allow the equivalent plain IPv4 address")
+    }
+
+    @Test func plainIPv4InAllowlistShouldAllowIPv4MappedIPv6() {
+        let policy = NetworkPolicy(
+            direction: .deny,
+            allowedHosts: ["93.184.216.34"],
+            blockedHosts: [],
+            blockedCIDRs: []
+        )
+        let filter = DomainFilter(policy: policy)
+        let decision = filter.evaluate(host: "::ffff:93.184.216.34", port: 443)
+        #expect(
+            decision == .allow,
+            "Plain IPv4 in allowlist should allow IPv4-mapped IPv6 equivalent")
+    }
+}
+
+// MARK: - Pattern normalization regressions
+
+struct DomainFilterPatternNormalizationBugs {
+    // evaluate() strips trailing dots from the incoming host, but patterns in
+    // allowedHosts/blockedHosts are not normalized. In DNS, "example.com." and
+    // "example.com" are the same name, so patterns should be normalized too.
+
+    @Test func allowlistPatternTrailingDotNotStripped() {
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["example.com."]))
+        #expect(
+            filter.evaluate(host: "example.com", port: 443) == .allow,
+            "Pattern 'example.com.' should match host 'example.com'")
+    }
+
+    @Test func blocklistPatternTrailingDotNotStripped() {
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["evil.com."], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(
+            filter.evaluate(host: "evil.com", port: 443) != .allow,
+            "Blocked pattern 'evil.com.' should block 'evil.com'")
+    }
+
+    @Test func wildcardAllowlistPatternTrailingDotNotStripped() {
+        // "*.example.com." → suffix is ".example.com." which won't match
+        // "sub.example.com" because the host doesn't end with ".example.com."
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["*.example.com."]))
+        #expect(
+            filter.evaluate(host: "sub.example.com", port: 443) == .allow,
+            "Wildcard pattern '*.example.com.' should match subdomains")
+    }
+
+    @Test func wildcardBlocklistPatternTrailingDotNotStripped() {
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["*.evil.com."], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(
+            filter.evaluate(host: "sub.evil.com", port: 443) != .allow,
+            "Wildcard blocked pattern '*.evil.com.' should block subdomains")
+    }
+}
+
+// MARK: - Whitespace and multi-dot regressions
+
+struct DomainFilterWhitespaceBugs {
+    @Test func patternWithLeadingWhitespaceDoesNotMatch() {
+        // Leading whitespace in a pattern prevents exact match because
+        // " evil.com" != "evil.com". Patterns should be trimmed.
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: [" evil.com"], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(
+            filter.evaluate(host: "evil.com", port: 443) != .allow,
+            "Pattern with leading whitespace should still match the host")
+    }
+
+    @Test func cidrWithLeadingWhitespaceFailsToBlock() throws {
+        // Leading whitespace makes inet_pton fail, silently disabling the CIDR rule.
+        let policy = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR(" 10.0.0.0/8"))])
+        let filter = DomainFilter(policy: policy)
+        #expect(
+            filter.isBlockedCIDR("10.0.0.1"),
+            "Leading whitespace in CIDR should not disable the block rule")
+    }
+
+    @Test func multipleTrailingDotsNotFullyStripped() {
+        // The code strips exactly one trailing dot. A host with two trailing dots
+        // ("example.com..") becomes "example.com." after stripping, which doesn't
+        // match the pattern "example.com".
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["example.com"]))
+        #expect(
+            filter.evaluate(host: "example.com..", port: 443) == .allow,
+            "All trailing dots should be stripped to match the base domain")
+    }
+}

@@ -39,42 +39,6 @@ struct ClaudeTemplateTests {
     }
 }
 
-struct SessionTrackerTests {
-    let tracker = SessionTracker()
-
-    @Test func createAndRemoveSession() throws {
-        let containerId = "test-container-\(UUID().uuidString)"
-        let sessionId = try tracker.create(for: containerId)
-        let wasLast = tracker.remove(sessionId: sessionId, for: containerId)
-        #expect(wasLast)
-    }
-
-    @Test func multipleSessions() throws {
-        let containerId = "test-container-\(UUID().uuidString)"
-        let s1 = try tracker.create(for: containerId)
-        let s2 = try tracker.create(for: containerId)
-
-        let wasLast1 = tracker.remove(sessionId: s1, for: containerId)
-        #expect(!wasLast1)
-
-        let wasLast2 = tracker.remove(sessionId: s2, for: containerId)
-        #expect(wasLast2)
-    }
-
-    @Test func clearAllRemovesEverything() throws {
-        let containerId = "test-container-\(UUID().uuidString)"
-        _ = try tracker.create(for: containerId)
-        _ = try tracker.create(for: containerId)
-
-        tracker.clearAll(for: containerId)
-
-        // Creating and immediately removing should show it's the last
-        let s = try tracker.create(for: containerId)
-        let wasLast = tracker.remove(sessionId: s, for: containerId)
-        #expect(wasLast)
-    }
-}
-
 struct SandboxManagerUtilTests {
     @Test func parseWorkspacePathPlain() {
         let (path, readOnly) = SandboxManager.parseWorkspacePath("/some/path")

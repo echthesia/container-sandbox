@@ -4,7 +4,7 @@ import Testing
 @testable import sandbox
 
 /// Tests for SessionTracker using fake storage and controllable PID liveness.
-struct FakeSessionTrackerTests {
+struct SessionTrackerUnitTests {
     // MARK: - Stale PID cleanup
 
     @Test func deadPIDsRemovedDuringRemoval() throws {
@@ -173,5 +173,43 @@ struct FakeSessionTrackerTests {
         let wasLast = tracker.remove(sessionId: "s1", for: "c1")
         // Even though remove failed, s2 is still alive
         #expect(!wasLast, "Remove error should not prevent counting remaining sessions")
+    }
+}
+
+/// Integration-style tests against the real on-disk SessionTracker storage.
+/// Each test uses a fresh container ID so runs don't collide.
+struct SessionTrackerIntegrationTests {
+    let tracker = SessionTracker()
+
+    @Test func createAndRemoveSession() throws {
+        let containerId = "test-container-\(UUID().uuidString)"
+        let sessionId = try tracker.create(for: containerId)
+        let wasLast = tracker.remove(sessionId: sessionId, for: containerId)
+        #expect(wasLast)
+    }
+
+    @Test func multipleSessions() throws {
+        let containerId = "test-container-\(UUID().uuidString)"
+        let s1 = try tracker.create(for: containerId)
+        let s2 = try tracker.create(for: containerId)
+
+        let wasLast1 = tracker.remove(sessionId: s1, for: containerId)
+        #expect(!wasLast1)
+
+        let wasLast2 = tracker.remove(sessionId: s2, for: containerId)
+        #expect(wasLast2)
+    }
+
+    @Test func clearAllRemovesEverything() throws {
+        let containerId = "test-container-\(UUID().uuidString)"
+        _ = try tracker.create(for: containerId)
+        _ = try tracker.create(for: containerId)
+
+        tracker.clearAll(for: containerId)
+
+        // Creating and immediately removing should show it's the last
+        let s = try tracker.create(for: containerId)
+        let wasLast = tracker.remove(sessionId: s, for: containerId)
+        #expect(wasLast)
     }
 }

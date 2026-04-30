@@ -606,3 +606,164 @@ struct SandboxManagerLifecycleTests {
         #expect(duplicates.count <= 1, "Should not create conflicting mounts at the same destination")
     }
 }
+
+// MARK: - Adversarial: extraWorkspacesLabel ordering
+
+struct AdversarialSandboxManagerTests {
+    // Bug #7: extraWorkspacesLabel is order-dependent for :ro dedup.
+    // The `seen` set deduplicates by resolved path, but the :ro annotation
+    // comes from the first occurrence. Different input order → different labels.
+    // This causes spurious extraWorkspaceMismatch errors on sandbox reuse.
+
+    @Test func extraWorkspacesLabelOrderIndependentForReadOnly() {
+        let tmp = FileManager.default.temporaryDirectory.path
+        let extra = "\(tmp)/adversarial-ws-test"
+        try? FileManager.default.createDirectory(atPath: extra, withIntermediateDirectories: true)
+        defer { try? FileManager.default.removeItem(atPath: extra) }
+
+        let label1 = SandboxManager.extraWorkspacesLabel(["\(extra):ro", extra])
+        let label2 = SandboxManager.extraWorkspacesLabel([extra, "\(extra):ro"])
+        #expect(
+            label1 == label2,
+            "Same paths with different :ro ordering should produce identical labels. Got '\(label1)' vs '\(label2)'")
+    }
+
+    @Test func extraWorkspacesLabelOrderIndependentMultiplePaths() {
+        let tmp = FileManager.default.temporaryDirectory.path
+        let a = "\(tmp)/adversarial-ws-a"
+        let b = "\(tmp)/adversarial-ws-b"
+        try? FileManager.default.createDirectory(atPath: a, withIntermediateDirectories: true)
+        try? FileManager.default.createDirectory(atPath: b, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(atPath: a)
+            try? FileManager.default.removeItem(atPath: b)
+        }
+
+        // Different ordering of the same two paths should produce the same label.
+        let label1 = SandboxManager.extraWorkspacesLabel([a, b])
+        let label2 = SandboxManager.extraWorkspacesLabel([b, a])
+        #expect(
+            label1 == label2,
+            "Extra workspace labels should be order-independent. Got '\(label1)' vs '\(label2)'")
+    }
+}
+
+// MARK: - Duplicate / label / input regressions
+
+private let edgeCaseWorkspace = FileManager.default.temporaryDirectory
+    .appendingPathComponent("sandbox-edgecase-workspace").path
+private let edgeCaseExtra = FileManager.default.temporaryDirectory
+    .appendingPathComponent("sandbox-edgecase-extra").path
+
+private func makeEdgeCaseManager() -> (SandboxManager, FakeContainerOperations) {
+    let containers = FakeContainerOperations()
+    let images = FakeImageOperations()
+    images.existingImages = [
+        "container-sandbox-claude:latest", "docker.io/ubuntu:26.04",
+    ]
+    let manager = SandboxManager(
+        containers: containers,
+        images: images,
+        kernels: FakeKernelProvider(),
+        sessions: SessionTracker(storage: FakeSessionStorage(), pidIsAlive: { _ in false }),
+        proxy: ProxyManager(launcher: FakeProxyLauncher(), stateStorage: FakeProxyStateStorage()),
+        libexecPath: testLibexecPath
+    )
+    return (manager, containers)
+}
+
+struct SandboxManagerDuplicateMountBugs {
+    init() {
+        try? FileManager.default.createDirectory(
+            atPath: edgeCaseWorkspace, withIntermediateDirectories: true
+        )
+        try? FileManager.default.createDirectory(
+            atPath: edgeCaseExtra, withIntermediateDirectories: true
+        )
+    }
+
+    @Test func duplicateExtraWorkspacesCreateConflictingMounts() async throws {
+        // Passing the same path twice in extraWorkspaces (once r/w, once r/o)
+        // creates two virtiofs mounts at the same destination. The dedup check
+        // only compares against the primary workspace, not among extras.
+        let (manager, containers) = makeEdgeCaseManager()
+
+        _ = try await manager.ensureSandboxExists(
+            template: ShellTemplate(),
+            workspace: edgeCaseWorkspace,
+            extraWorkspaces: [edgeCaseExtra, "\(edgeCaseExtra):ro"]
+        )
+
+        let config = containers.createdConfigs[0]
+        let resolvedExtra = SandboxManager.resolveWorkspacePath(edgeCaseExtra)
+        let mountsAtDest = config.mounts.filter { $0.destination == resolvedExtra }
+        #expect(
+            mountsAtDest.count <= 1,
+            "Should not create \(mountsAtDest.count) conflicting mounts at '\(resolvedExtra)'")
+    }
+
+    @Test func sameExtraWorkspaceDifferentFormsCreatesDuplicateMounts() async throws {
+        // The same directory expressed as two different path forms (with/without
+        // trailing slash or ../) would both be resolved to the same destination,
+        // creating duplicate mounts.
+        let (manager, containers) = makeEdgeCaseManager()
+
+        let parent = FileManager.default.temporaryDirectory.path
+        let extra1 = edgeCaseExtra
+        let extra2 = "\(parent)/sandbox-edgecase-extra/../sandbox-edgecase-extra"
+
+        _ = try await manager.ensureSandboxExists(
+            template: ShellTemplate(),
+            workspace: edgeCaseWorkspace,
+            extraWorkspaces: [extra1, extra2]
+        )
+
+        let config = containers.createdConfigs[0]
+        let resolvedExtra = SandboxManager.resolveWorkspacePath(edgeCaseExtra)
+        let mountsAtDest = config.mounts.filter { $0.destination == resolvedExtra }
+        #expect(
+            mountsAtDest.count <= 1,
+            "Same directory via different paths should not create duplicate mounts")
+    }
+}
+
+struct SandboxManagerLabelBugs {
+    @Test func extraWorkspaceLabelCommaAmbiguity() {
+        // A single path containing a comma produces the same label as two
+        // separate paths joined by comma. "/a,/b" (one path: file "b" in
+        // directory "a,") collides with two paths "/a" and "/b" joined as "/a,/b".
+        let singlePathWithComma = SandboxManager.extraWorkspacesLabel(["/a,/b"])
+        let twoSeparatePaths = SandboxManager.extraWorkspacesLabel(["/a", "/b"])
+        #expect(
+            singlePathWithComma != twoSeparatePaths,
+            "Label for path '/a,/b' should differ from label for paths '/a' + '/b'")
+    }
+}
+
+struct SandboxManagerInputValidationBugs {
+    init() {
+        try? FileManager.default.createDirectory(
+            atPath: edgeCaseWorkspace, withIntermediateDirectories: true
+        )
+    }
+
+    @Test func emptyExtraWorkspaceSilentlyMountsCwd() async throws {
+        // An empty string in extraWorkspaces resolves to the current working
+        // directory via resolveWorkspacePath(""). This silently mounts the
+        // entire cwd into the sandbox with no indication to the user.
+        let (manager, containers) = makeEdgeCaseManager()
+
+        _ = try await manager.ensureSandboxExists(
+            template: ShellTemplate(),
+            workspace: edgeCaseWorkspace,
+            extraWorkspaces: [""]
+        )
+
+        let config = containers.createdConfigs[0]
+        let resolvedCwd = SandboxManager.resolveWorkspacePath("")
+        let cwdMounts = config.mounts.filter { $0.destination == resolvedCwd }
+        #expect(
+            cwdMounts.isEmpty,
+            "Empty string extra workspace should not silently mount '\(resolvedCwd)'")
+    }
+}

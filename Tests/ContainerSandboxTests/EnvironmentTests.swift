@@ -228,3 +228,46 @@ struct TermInjectionTests {
             "non-TTY exec should not inject TERM")
     }
 }
+
+// MARK: - deduplicateEnvironment property tests
+
+struct DeduplicateEnvironmentPropertyTests {
+    /// deduplicateEnvironment should be idempotent: applying it twice
+    /// produces the same result as applying it once.
+    @Test func deduplicateEnvironmentIsIdempotent() {
+        let input: [(key: String, value: String)] = [
+            ("FOO", "a"), ("BAR", "b"), ("FOO", "c"), ("BAZ", "d"), ("BAR", "e"),
+        ]
+        let once = deduplicateEnvironment(input)
+        // Parse the output back to tuples and dedup again.
+        let parsed = once.compactMap { parseEnvEntry($0) }
+        let twice = deduplicateEnvironment(parsed)
+        #expect(
+            once == twice,
+            "deduplicateEnvironment should be idempotent")
+    }
+
+    /// After deduplication, each key should appear exactly once.
+    @Test func deduplicateEnvironmentProducesUniqueKeys() {
+        let input: [(key: String, value: String)] = [
+            ("A", "1"), ("B", "2"), ("A", "3"), ("C", "4"), ("B", "5"), ("A", "6"),
+        ]
+        let result = deduplicateEnvironment(input)
+        let keys = result.compactMap { parseEnvEntry($0)?.key }
+        #expect(
+            keys.count == Set(keys).count,
+            "Each key should appear exactly once after deduplication")
+    }
+
+    // Last-writer-wins: the LAST value for each key should be preserved.
+    @Test func deduplicateEnvironmentLastWriterWins() throws {
+        let input: [(key: String, value: String)] = [
+            ("KEY", "first"), ("KEY", "middle"), ("KEY", "last"),
+        ]
+        let result = deduplicateEnvironment(input)
+        let value = try parseEnvEntry(#require(result.first))?.value
+        #expect(
+            value == "last",
+            "Last occurrence of a key should win. Got: \(value ?? "nil")")
+    }
+}
