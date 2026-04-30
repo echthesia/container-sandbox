@@ -7,7 +7,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A Swift CLI plugin for Apple's Container framework that creates isolated sandbox environments for AI coding agents. Installed as a `container` subcommand (`container sandbox ...`).
 
 - macOS 26+, Swift 6.2, strict concurrency (`Sendable` throughout)
-- Depends on `apple/container` (0.11.0) and `swift-argument-parser`
+- Depends on `apple/container` (0.12.0) and `swift-argument-parser`
 - Go 1.23 module under `init-image/` for in-container helpers (Linux-targeted)
 
 ## Build / Test / Install
