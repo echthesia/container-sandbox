@@ -1,7 +1,7 @@
 import ContainerAPIClient
+import ContainerResource
 import ContainerizationError
 import ContainerizationOCI
-import ContainerResource
 import Foundation
 import Logging
 
@@ -180,7 +180,7 @@ struct SandboxManager {
         // Mount the libexec directory into the container (virtiofs shares
         // directories, not individual files). Both binaries must be present.
         guard FileManager.default.fileExists(atPath: libexecPath + "/proxy-bridge"),
-              FileManager.default.fileExists(atPath: libexecPath + "/sandbox-init")
+            FileManager.default.fileExists(atPath: libexecPath + "/sandbox-init")
         else {
             throw SandboxError.proxyBridgeMissing
         }
@@ -347,7 +347,7 @@ struct SandboxManager {
     /// If the same path appears multiple times with different modes, `:ro` wins
     /// (stricter is safer, and avoids label mismatch from input ordering).
     static func extraWorkspacesLabel(_ extras: [String]) -> String {
-        var modes: [String: Bool] = [:] // resolved path -> readOnly
+        var modes: [String: Bool] = [:]  // resolved path -> readOnly
         var order: [String] = []
         for input in extras {
             let (path, readOnly) = parseWorkspacePath(input)

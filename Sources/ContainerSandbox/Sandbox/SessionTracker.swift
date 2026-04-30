@@ -42,7 +42,7 @@ struct FileSessionStorage: SessionStorage {
         for file in files {
             let filePath = dir.appendingPathComponent(file)
             guard let contents = try? String(contentsOf: filePath, encoding: .utf8),
-                  let pid = Int32(contents.trimmingCharacters(in: .whitespacesAndNewlines))
+                let pid = Int32(contents.trimmingCharacters(in: .whitespacesAndNewlines))
             else {
                 // Corrupt file — remove it
                 try? FileManager.default.removeItem(at: filePath)

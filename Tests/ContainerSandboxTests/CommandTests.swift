@@ -1,6 +1,7 @@
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 // Tests for the extracted command functions, exercising multi-step sequences,
 // dispatch logic, and post-error state invariants that unit tests on individual
@@ -43,17 +44,20 @@ struct PolicyChangeSequenceTests {
         )
 
         // The old proxy should have been killed.
-        #expect(h.proxyLauncher.killedPIDs.contains(existingState.pid),
-                "Old proxy process should be killed on policy change")
+        #expect(
+            h.proxyLauncher.killedPIDs.contains(existingState.pid),
+            "Old proxy process should be killed on policy change")
 
         // A new proxy should have been launched.
-        #expect(h.proxyLauncher.launchCount == 1,
-                "A new proxy should be launched after killing the old one")
+        #expect(
+            h.proxyLauncher.launchCount == 1,
+            "A new proxy should be launched after killing the old one")
 
         // The persisted policy should now be "deny".
         let saved = try h.proxyStorage.loadPolicy(for: "my-sandbox")
-        #expect(saved?.direction == .deny,
-                "Persisted policy should reflect the update")
+        #expect(
+            saved?.direction == .deny,
+            "Persisted policy should reflect the update")
     }
 
     @Test func policyChangeOnStoppedSandboxPersistsWithoutLaunching() async throws {
@@ -76,8 +80,9 @@ struct PolicyChangeSequenceTests {
         #expect(saved?.allowedHosts.contains("example.com") == true)
 
         // No proxy should have been launched — sandbox isn't running.
-        #expect(h.proxyLauncher.launchCount == 0,
-                "Should not launch proxy for a stopped sandbox")
+        #expect(
+            h.proxyLauncher.launchCount == 0,
+            "Should not launch proxy for a stopped sandbox")
     }
 
     @Test func consecutivePolicyChangesEachRestartProxy() async throws {
@@ -103,8 +108,9 @@ struct PolicyChangeSequenceTests {
         )
 
         // Second call should also trigger a restart since the policy changed again.
-        #expect(h.proxyLauncher.launchCount == 2,
-                "Each policy mutation on a running sandbox should restart the proxy")
+        #expect(
+            h.proxyLauncher.launchCount == 2,
+            "Each policy mutation on a running sandbox should restart the proxy")
     }
 }
 
@@ -134,13 +140,16 @@ struct PolicyFallbackTests {
 
         let saved = try h.proxyStorage.loadPolicy(for: "my-sandbox")
         // Should inherit the template's allow direction.
-        #expect(saved?.direction == .allow,
-                "Should fall back to template's default direction (allow)")
+        #expect(
+            saved?.direction == .allow,
+            "Should fall back to template's default direction (allow)")
         // Should include the default allowed hosts and the new one.
-        #expect(saved?.allowedHosts.contains("*.anthropic.com") == true,
-                "Should inherit default allowed hosts")
-        #expect(saved?.allowedHosts.contains("extra.com") == true,
-                "Should include the newly added host")
+        #expect(
+            saved?.allowedHosts.contains("*.anthropic.com") == true,
+            "Should inherit default allowed hosts")
+        #expect(
+            saved?.allowedHosts.contains("extra.com") == true,
+            "Should include the newly added host")
     }
 
     @Test func unknownAgentLabelFallsBackToAllow() async throws {
@@ -159,8 +168,9 @@ struct PolicyFallbackTests {
 
         let saved = try h.proxyStorage.loadPolicy(for: "orphan")
         // With no template match, falls back to .allow.
-        #expect(saved?.direction == .allow,
-                "Should fall back to .allow when agent template is unknown")
+        #expect(
+            saved?.direction == .allow,
+            "Should fall back to .allow when agent template is unknown")
         #expect(saved?.blockedHosts.contains("evil.com") == true)
     }
 
@@ -183,10 +193,12 @@ struct PolicyFallbackTests {
 
         let saved = try h.proxyStorage.loadPolicy(for: "my-sandbox")
         // Should build on the persisted policy, not the template default.
-        #expect(saved?.direction == .allow,
-                "Should use persisted direction, not template default")
-        #expect(saved?.allowedHosts == ["custom.com"],
-                "Should preserve existing allowed hosts from persisted policy")
+        #expect(
+            saved?.direction == .allow,
+            "Should use persisted direction, not template default")
+        #expect(
+            saved?.allowedHosts == ["custom.com"],
+            "Should preserve existing allowed hosts from persisted policy")
         #expect(saved?.blockedHosts.contains("bad.com") == true)
     }
 }
@@ -218,10 +230,12 @@ struct PolicyDeconflictionTests {
         )
 
         let saved = try h.proxyStorage.loadPolicy(for: "sb")
-        #expect(saved?.allowedHosts.contains("a.com") == true,
-                "Host should appear in allow list")
-        #expect(saved?.blockedHosts.contains("a.com") != true,
-                "Host should be removed from block list")
+        #expect(
+            saved?.allowedHosts.contains("a.com") == true,
+            "Host should appear in allow list")
+        #expect(
+            saved?.blockedHosts.contains("a.com") != true,
+            "Host should be removed from block list")
     }
 
     @Test func blockHostRemovesFromAllowList() async throws {
@@ -242,10 +256,12 @@ struct PolicyDeconflictionTests {
         )
 
         let saved = try h.proxyStorage.loadPolicy(for: "sb")
-        #expect(saved?.blockedHosts.contains("a.com") == true,
-                "Host should appear in block list")
-        #expect(saved?.allowedHosts.contains("a.com") != true,
-                "Host should be removed from allow list")
+        #expect(
+            saved?.blockedHosts.contains("a.com") == true,
+            "Host should appear in block list")
+        #expect(
+            saved?.allowedHosts.contains("a.com") != true,
+            "Host should be removed from allow list")
     }
 
     @Test func deconflictionIsCaseInsensitive() async throws {
@@ -267,8 +283,9 @@ struct PolicyDeconflictionTests {
 
         let saved = try h.proxyStorage.loadPolicy(for: "sb")
         #expect(saved?.allowedHosts.contains("evil.com") == true)
-        #expect(saved?.blockedHosts.isEmpty == true,
-                "Case-different blocked entry should be removed")
+        #expect(
+            saved?.blockedHosts.isEmpty == true,
+            "Case-different blocked entry should be removed")
     }
 
     @Test func allowAndBlockInSameCallBlockWins() async throws {
@@ -289,10 +306,12 @@ struct PolicyDeconflictionTests {
         )
 
         let saved = try h.proxyStorage.loadPolicy(for: "sb")
-        #expect(saved?.blockedHosts.contains("conflict.com") == true,
-                "Block should win when both are specified in the same call")
-        #expect(saved?.allowedHosts.contains("conflict.com") != true,
-                "Allow entry should be removed by the subsequent block")
+        #expect(
+            saved?.blockedHosts.contains("conflict.com") == true,
+            "Block should win when both are specified in the same call")
+        #expect(
+            saved?.allowedHosts.contains("conflict.com") != true,
+            "Allow entry should be removed by the subsequent block")
     }
 }
 
@@ -323,10 +342,12 @@ struct PolicyAccumulationTests {
         )
 
         let saved = try h.proxyStorage.loadPolicy(for: "sb")
-        #expect(saved?.allowedHosts.contains("a.com") == true,
-                "First allowed host should persist across calls")
-        #expect(saved?.allowedHosts.contains("b.com") == true,
-                "Second allowed host should be appended")
+        #expect(
+            saved?.allowedHosts.contains("a.com") == true,
+            "First allowed host should persist across calls")
+        #expect(
+            saved?.allowedHosts.contains("b.com") == true,
+            "Second allowed host should be appended")
     }
 }
 
@@ -344,8 +365,9 @@ struct ExtraWorkspaceRoundTripTests {
         let withDupes = SandboxManager.extraWorkspacesLabel([testWorkspace, testWorkspace])
         let withoutDupes = SandboxManager.extraWorkspacesLabel([testWorkspace])
 
-        #expect(withDupes == withoutDupes,
-                "Duplicate extras should be collapsed to match mount deduplication")
+        #expect(
+            withDupes == withoutDupes,
+            "Duplicate extras should be collapsed to match mount deduplication")
     }
 
     @Test func extraWorkspaceLabelIsPathNormalized() {
@@ -354,8 +376,9 @@ struct ExtraWorkspaceRoundTripTests {
         let direct = SandboxManager.extraWorkspacesLabel([testWorkspace])
         let indirect = SandboxManager.extraWorkspacesLabel([testWorkspace + "/../" + URL(fileURLWithPath: testWorkspace).lastPathComponent])
 
-        #expect(direct == indirect,
-                "Path-equivalent extras should produce the same label")
+        #expect(
+            direct == indirect,
+            "Path-equivalent extras should produce the same label")
     }
 }
 
@@ -382,8 +405,9 @@ struct CreateCommandDispatchTests {
         }
 
         // No container should have been created.
-        #expect(h.containers.createdConfigs.isEmpty,
-                "No container should be created when the name is reserved")
+        #expect(
+            h.containers.createdConfigs.isEmpty,
+            "No container should be created when the name is reserved")
     }
 
     @Test func reservedNameShellIsAlsoRejected() async throws {
@@ -405,8 +429,9 @@ struct CreateCommandDispatchTests {
             nameOverride: "my-custom-sandbox", manager: h.manager
         )
 
-        #expect(h.containers.snapshots["my-custom-sandbox"] != nil,
-                "Sandbox should be created with the overridden name")
+        #expect(
+            h.containers.snapshots["my-custom-sandbox"] != nil,
+            "Sandbox should be created with the overridden name")
     }
 
     @Test func unknownAgentThrowsUnknownAgent() async throws {
@@ -467,10 +492,12 @@ struct RemoveCommandTests {
         // Container should be gone.
         #expect(h.containers.deletedIds.contains("doomed"))
         // All proxy state — both policy and runtime — should be cleared.
-        #expect(h.proxyStorage.writtenPolicies["doomed"] == nil,
-                "Policy config should be removed")
-        #expect(try h.proxyStorage.loadState(for: "doomed") == nil,
-                "Runtime state should be removed")
+        #expect(
+            h.proxyStorage.writtenPolicies["doomed"] == nil,
+            "Policy config should be removed")
+        #expect(
+            try h.proxyStorage.loadState(for: "doomed") == nil,
+            "Runtime state should be removed")
     }
 
     @Test func removeNonexistentSandboxReportsMissing() async throws {
@@ -490,10 +517,12 @@ struct RemoveCommandTests {
         try await removeSandboxes(names: ["running-sb"], manager: h.manager)
 
         // Should stop before deleting.
-        #expect(h.containers.stoppedIds.contains("running-sb"),
-                "Running container should be stopped before deletion")
-        #expect(h.containers.deletedIds.contains("running-sb"),
-                "Container should be deleted after stopping")
+        #expect(
+            h.containers.stoppedIds.contains("running-sb"),
+            "Running container should be stopped before deletion")
+        #expect(
+            h.containers.deletedIds.contains("running-sb"),
+            "Container should be deleted after stopping")
     }
 }
 
@@ -518,8 +547,9 @@ struct ErrorStateInvariantTests {
         }
 
         // No policy should have been written.
-        #expect(h.proxyStorage.writtenPolicies.isEmpty,
-                "Failed command should not leave partial proxy state")
+        #expect(
+            h.proxyStorage.writtenPolicies.isEmpty,
+            "Failed command should not leave partial proxy state")
         // No proxy should have been launched.
         #expect(h.proxyLauncher.launchCount == 0)
     }
@@ -551,9 +581,11 @@ struct ErrorStateInvariantTests {
             )
         }
 
-        #expect(h.containers.createdConfigs.isEmpty,
-                "No container should be created when workspace doesn't exist")
-        #expect(h.proxyLauncher.launchCount == 0,
-                "No proxy should be launched when workspace doesn't exist")
+        #expect(
+            h.containers.createdConfigs.isEmpty,
+            "No container should be created when workspace doesn't exist")
+        #expect(
+            h.proxyLauncher.launchCount == 0,
+            "No proxy should be launched when workspace doesn't exist")
     }
 }

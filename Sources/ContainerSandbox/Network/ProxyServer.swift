@@ -71,9 +71,11 @@ final class ProxyServer: Sendable {
             try await channel.executeThenClose { inbound, outbound in
                 var iterator = inbound.makeAsyncIterator()
                 guard let firstBuffer = try await iterator.next() else { return }
-                guard let firstByte = firstBuffer.getInteger(
-                    at: firstBuffer.readerIndex, as: UInt8.self
-                ) else { return }
+                guard
+                    let firstByte = firstBuffer.getInteger(
+                        at: firstBuffer.readerIndex, as: UInt8.self
+                    )
+                else { return }
 
                 // Re-queue the first buffer for the protocol handler.
                 var buffer = firstBuffer
@@ -141,7 +143,7 @@ final class ProxyServer: Sendable {
         switch decision {
         case .allow:
             proxyLog.info("ALLOW CONNECT \(target)")
-        case let .deny(reason):
+        case .deny(let reason):
             proxyLog.info("DENY CONNECT \(target): \(reason)")
             try await writeHTTPResponse(
                 outbound, allocator: channel.allocator,
@@ -229,7 +231,7 @@ final class ProxyServer: Sendable {
         switch decision {
         case .allow:
             proxyLog.info("ALLOW HTTP \(request.method) \(host):\(port)\(path)")
-        case let .deny(reason):
+        case .deny(let reason):
             proxyLog.info("DENY HTTP \(request.method) \(host):\(port): \(reason)")
             try await writeHTTPResponse(
                 outbound, allocator: channel.allocator,
@@ -307,7 +309,7 @@ final class ProxyServer: Sendable {
         let base = buffer.readerIndex
 
         guard let version = buffer.getInteger(at: base, as: UInt8.self),
-              let numMethods = buffer.getInteger(at: base + 1, as: UInt8.self)
+            let numMethods = buffer.getInteger(at: base + 1, as: UInt8.self)
         else { return }
 
         guard version == 0x05 else {
@@ -332,9 +334,9 @@ final class ProxyServer: Sendable {
         let reqBase = buffer.readerIndex
 
         guard let reqVersion = buffer.getInteger(at: reqBase, as: UInt8.self),
-              let cmd = buffer.getInteger(at: reqBase + 1, as: UInt8.self),
-              // byte at reqBase+2 is reserved
-              let atyp = buffer.getInteger(at: reqBase + 3, as: UInt8.self)
+            let cmd = buffer.getInteger(at: reqBase + 1, as: UInt8.self),
+            // byte at reqBase+2 is reserved
+            let atyp = buffer.getInteger(at: reqBase + 3, as: UInt8.self)
         else { return }
 
         guard reqVersion == 0x05 else {
@@ -355,7 +357,7 @@ final class ProxyServer: Sendable {
         // Force unwraps below: preceding accumulate() calls guarantee bytes exist.
         // swiftlint:disable force_unwrapping
         switch atyp {
-        case 0x01: // IPv4: 4 bytes
+        case 0x01:  // IPv4: 4 bytes
             try await accumulate(buffer: &buffer, iterator: &iterator, minimum: 4 + 4 + 2)
             let b0 = buffer.getInteger(at: reqBase + 4, as: UInt8.self)!
             let b1 = buffer.getInteger(at: reqBase + 5, as: UInt8.self)!
@@ -364,7 +366,7 @@ final class ProxyServer: Sendable {
             host = "\(b0).\(b1).\(b2).\(b3)"
             addrLen = 4
 
-        case 0x03: // Domain name: 1 byte length + name
+        case 0x03:  // Domain name: 1 byte length + name
             try await accumulate(buffer: &buffer, iterator: &iterator, minimum: 5)
             let nameLen = Int(buffer.getInteger(at: reqBase + 4, as: UInt8.self)!)
             guard nameLen > 0 else {
@@ -381,10 +383,10 @@ final class ProxyServer: Sendable {
             host = String(buffer: nameSlice)
             addrLen = 1 + nameLen
 
-        case 0x04: // IPv6: 16 bytes
+        case 0x04:  // IPv6: 16 bytes
             try await accumulate(buffer: &buffer, iterator: &iterator, minimum: 4 + 16 + 2)
             guard let bytes = buffer.getBytes(at: reqBase + 4, length: 16),
-                  let formatted = formatIPv6(bytes)
+                let formatted = formatIPv6(bytes)
             else {
                 try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
                 return
@@ -400,9 +402,11 @@ final class ProxyServer: Sendable {
 
         // Port (2 bytes, big-endian).
         let portOffset = reqBase + 4 + addrLen
-        guard let portBE = buffer.getInteger(
-            at: portOffset, endianness: .big, as: UInt16.self
-        ) else { return }
+        guard
+            let portBE = buffer.getInteger(
+                at: portOffset, endianness: .big, as: UInt16.self
+            )
+        else { return }
         let port = Int(portBE)
 
         // Consume the request bytes.
@@ -414,7 +418,7 @@ final class ProxyServer: Sendable {
         switch decision {
         case .allow:
             proxyLog.info("ALLOW SOCKS5 CONNECT \(host):\(port)")
-        case let .deny(reason):
+        case .deny(let reason):
             proxyLog.info("DENY SOCKS5 CONNECT \(host):\(port): \(reason)")
             try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .notAllowed)
             return
@@ -540,7 +544,8 @@ final class ProxyServer: Sendable {
         let withoutScheme = String(uri.dropFirst("http://".count))
         let slashIndex = withoutScheme.firstIndex(of: "/") ?? withoutScheme.endIndex
         var authority = String(withoutScheme[..<slashIndex])
-        let path = slashIndex < withoutScheme.endIndex
+        let path =
+            slashIndex < withoutScheme.endIndex
             ? String(withoutScheme[slashIndex...]) : "/"
         if let atIndex = authority.lastIndex(of: "@") {
             authority = String(authority[authority.index(after: atIndex)...])
@@ -559,12 +564,12 @@ final class ProxyServer: Sendable {
         reply: Socks5Reply
     ) async throws {
         var buf = allocator.buffer(capacity: 10)
-        buf.writeInteger(UInt8(0x05)) // version
+        buf.writeInteger(UInt8(0x05))  // version
         buf.writeInteger(reply.rawValue)
-        buf.writeInteger(UInt8(0x00)) // reserved
-        buf.writeInteger(UInt8(0x01)) // IPv4
-        buf.writeInteger(UInt32(0)) // 0.0.0.0
-        buf.writeInteger(UInt16(0)) // port 0
+        buf.writeInteger(UInt8(0x00))  // reserved
+        buf.writeInteger(UInt8(0x01))  // IPv4
+        buf.writeInteger(UInt32(0))  // 0.0.0.0
+        buf.writeInteger(UInt16(0))  // port 0
         try await outbound.write(buf)
     }
 }
@@ -623,8 +628,8 @@ private func findHeaderEnd(in buffer: ByteBuffer) -> Int? {
     let readable = buffer.readableBytes
     guard readable >= 4 else { return nil }
     let base = buffer.readerIndex
-    let marker: UInt32 = 0x0D0A_0D0A // \r\n\r\n
-    for i in 0 ... (readable - 4) {
+    let marker: UInt32 = 0x0D0A_0D0A  // \r\n\r\n
+    for i in 0...(readable - 4) {
         if buffer.getInteger(at: base + i, endianness: .big, as: UInt32.self) == marker {
             return i
         }
@@ -655,7 +660,7 @@ private func parseRequestBytes(_ buffer: ByteBuffer) throws -> HTTPRequest {
     for line in lines {
         if line.isEmpty { break }
         guard let colonIndex = line.firstIndex(of: ":") else { continue }
-        let name = String(line[line.startIndex ..< colonIndex]).trimmingCharacters(in: .whitespaces)
+        let name = String(line[line.startIndex..<colonIndex]).trimmingCharacters(in: .whitespaces)
         let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
             in: .whitespaces
         )
@@ -716,8 +721,8 @@ private func formatIPv6(_ bytes: [UInt8]) -> String? {
 private func resolvedBlockedIP(channel: Channel, filter: DomainFilter) -> String? {
     let resolvedIP: String?
     switch channel.remoteAddress {
-    case let .v4(addr): resolvedIP = addr.host
-    case let .v6(addr): resolvedIP = addr.host
+    case .v4(let addr): resolvedIP = addr.host
+    case .v6(let addr): resolvedIP = addr.host
     default: resolvedIP = nil
     }
     guard let ip = resolvedIP, filter.isBlockedCIDR(ip) else { return nil }

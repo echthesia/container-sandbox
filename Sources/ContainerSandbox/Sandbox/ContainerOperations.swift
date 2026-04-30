@@ -1,7 +1,7 @@
 import ContainerAPIClient
+import ContainerResource
 import Containerization
 import ContainerizationOCI
-import ContainerResource
 import Foundation
 
 // MARK: - Protocols

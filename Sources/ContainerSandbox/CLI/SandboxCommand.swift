@@ -118,7 +118,7 @@ func runSandbox(
         let imageUser = imageUserFromLabels(labels)
         let config: ProcessConfiguration
         if let agentName = labels[SandboxLabels.agent],
-           let savedTemplate = AgentRegistry.resolve(agentName)
+            let savedTemplate = AgentRegistry.resolve(agentName)
         {
             config = savedTemplate.processConfiguration(
                 baseConfig: initConfig,
@@ -451,7 +451,8 @@ func configureNetworkProxy(
 
     if hasOverrides {
         // Mutate: load current policy, apply overrides, persist.
-        let base = (try? manager.proxy.stateStorage.loadPolicy(for: sandboxName))
+        let base =
+            (try? manager.proxy.stateStorage.loadPolicy(for: sandboxName))
             ?? AgentRegistry.resolve(
                 snapshot.configuration.labels[SandboxLabels.agent] ?? ""
             )?.defaultNetworkPolicy

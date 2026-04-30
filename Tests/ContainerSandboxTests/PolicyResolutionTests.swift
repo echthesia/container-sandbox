@@ -1,6 +1,7 @@
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 /// Tests the policy mutation logic as used by NetworkProxyCommand.
 /// The mutation contract: load existing policy as base, then apply incremental
@@ -106,8 +107,9 @@ struct PolicyMutationTests {
             allowHosts: ["foo.com"],
             blockHosts: ["bar.com"]
         )
-        #expect(result.blockedCIDRs == base.blockedCIDRs,
-                "CIDRs must not be affected by host/direction mutations")
+        #expect(
+            result.blockedCIDRs == base.blockedCIDRs,
+            "CIDRs must not be affected by host/direction mutations")
     }
 
     // MARK: - Fallback base policy

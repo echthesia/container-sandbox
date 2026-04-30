@@ -93,7 +93,7 @@ extension NetworkPolicy: Equatable {
 /// The address is stored post-masked — host bits beyond the prefix length are
 /// zeroed — so 10.0.0.1/8 is indistinguishable from 10.0.0.0/8.
 struct NormalizedCIDR: Hashable, Codable, CustomStringConvertible {
-    private let addressBytes: [UInt8] // 4 bytes for IPv4, 16 for IPv6
+    private let addressBytes: [UInt8]  // 4 bytes for IPv4, 16 for IPv6
     private let prefixLength: Int
 
     init?(_ cidr: String) {
@@ -189,7 +189,7 @@ struct NormalizedCIDR: Hashable, Codable, CustomStringConvertible {
         guard bytes.count == addressBytes.count else { return false }
         let fullBytes = prefixLength / 8
         let remainingBits = prefixLength % 8
-        for i in 0 ..< fullBytes {
+        for i in 0..<fullBytes {
             if bytes[i] != addressBytes[i] { return false }
         }
         if remainingBits > 0 {
@@ -203,7 +203,7 @@ struct NormalizedCIDR: Hashable, Codable, CustomStringConvertible {
     /// Zero out host bits beyond the prefix length so that e.g. 10.0.0.1/8 == 10.0.0.0/8.
     private static func masked(bytes: [UInt8], prefixLength: Int) -> [UInt8] {
         var result = bytes
-        for i in 0 ..< result.count {
+        for i in 0..<result.count {
             let bitOffset = i * 8
             if bitOffset >= prefixLength {
                 result[i] = 0

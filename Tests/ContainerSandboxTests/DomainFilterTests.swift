@@ -1,6 +1,7 @@
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 struct DomainFilterTests {
     // MARK: - Deny mode (block by default, allow listed)
@@ -237,9 +238,10 @@ struct DomainFilterTests {
     }
 
     @Test func multipleAllowedHosts() {
-        let filter = DomainFilter(policy: .deny(allowedHosts: [
-            "*.github.com", "registry.npmjs.org",
-        ]))
+        let filter = DomainFilter(
+            policy: .deny(allowedHosts: [
+                "*.github.com", "registry.npmjs.org",
+            ]))
         #expect(filter.evaluate(host: "api.anthropic.com", port: 443) == .allow)
         #expect(filter.evaluate(host: "raw.github.com", port: 443) == .allow)
         #expect(filter.evaluate(host: "registry.npmjs.org", port: 443) == .allow)

@@ -1,8 +1,9 @@
-import ContainerizationOCI
 import ContainerResource
+import ContainerizationOCI
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 struct SandboxManagerLifecycleTests {
     /// Shared setup: ensure test workspace exists.
@@ -134,8 +135,9 @@ struct SandboxManagerLifecycleTests {
         // default policy to state storage. This is the foundation of the policy
         // persistence model — bootstrap reads from state storage, not labels.
         let storedPolicy = try h.proxyStorage.loadPolicy(for: name)
-        #expect(storedPolicy == ClaudeTemplate().defaultNetworkPolicy,
-                "Creation must write template default policy to state storage")
+        #expect(
+            storedPolicy == ClaudeTemplate().defaultNetworkPolicy,
+            "Creation must write template default policy to state storage")
     }
 
     @Test func creationDoesNotWriteNetworkLabels() async throws {
@@ -148,14 +150,18 @@ struct SandboxManagerLifecycleTests {
 
         let created = h.containers.createdConfigs[0]
         // Network policy lives in state storage, not container labels.
-        #expect(created.labels["sandbox.direction"] == nil,
-                "Network policy direction must not be stored in labels")
-        #expect(created.labels["sandbox.allowed-hosts"] == nil,
-                "Allowed hosts must not be stored in labels")
-        #expect(created.labels["sandbox.blocked-hosts"] == nil,
-                "Blocked hosts must not be stored in labels")
-        #expect(created.labels["sandbox.blocked-cidrs"] == nil,
-                "Blocked CIDRs must not be stored in labels")
+        #expect(
+            created.labels["sandbox.direction"] == nil,
+            "Network policy direction must not be stored in labels")
+        #expect(
+            created.labels["sandbox.allowed-hosts"] == nil,
+            "Allowed hosts must not be stored in labels")
+        #expect(
+            created.labels["sandbox.blocked-hosts"] == nil,
+            "Blocked hosts must not be stored in labels")
+        #expect(
+            created.labels["sandbox.blocked-cidrs"] == nil,
+            "Blocked CIDRs must not be stored in labels")
     }
 
     @Test func creationBuildsImageIfMissing() async throws {
@@ -265,8 +271,9 @@ struct SandboxManagerLifecycleTests {
         // Verify startIfNeeded was called with the mutated policy (not template default).
         // The written policy should be the mutated one, not the original template default.
         let currentPolicy = try h.proxyStorage.loadPolicy(for: name)
-        #expect(currentPolicy == mutatedPolicy,
-                "Bootstrap should use the policy from state storage, not the original template default")
+        #expect(
+            currentPolicy == mutatedPolicy,
+            "Bootstrap should use the policy from state storage, not the original template default")
     }
 
     // MARK: - stopSandbox
@@ -314,8 +321,9 @@ struct SandboxManagerLifecycleTests {
 
         // Policy must survive stop — this is the core persistence contract.
         let policyAfterStop = try h.proxyStorage.loadPolicy(for: name)
-        #expect(policyAfterStop == policyBeforeStop,
-                "stop must preserve policy in state storage for restart")
+        #expect(
+            policyAfterStop == policyBeforeStop,
+            "stop must preserve policy in state storage for restart")
     }
 
     @Test func stopNonManagedSandboxThrows() async throws {
@@ -375,8 +383,9 @@ struct SandboxManagerLifecycleTests {
 
         // Delete must remove policy — sandbox is gone, no restart possible.
         let policyAfterDelete = try h.proxyStorage.loadPolicy(for: name)
-        #expect(policyAfterDelete == nil,
-                "delete must remove policy from state storage")
+        #expect(
+            policyAfterDelete == nil,
+            "delete must remove policy from state storage")
     }
 
     @Test func deleteStoppedContainerDeletesDirectly() async throws {
@@ -475,8 +484,9 @@ struct SandboxManagerLifecycleTests {
 
         let config = h.containers.createdConfigs[0]
         // The init process should inherit the image's environment
-        #expect(config.initProcess.environment.contains("PATH=/custom/bin"),
-                "Init process should use image env, not empty")
+        #expect(
+            config.initProcess.environment.contains("PATH=/custom/bin"),
+            "Init process should use image env, not empty")
         #expect(config.initProcess.environment.contains("LANG=C.UTF-8"))
     }
 
@@ -492,7 +502,7 @@ struct SandboxManagerLifecycleTests {
         let config = h.containers.createdConfigs[0]
         // proxy-bridge must run as root to connect to the vsock-relayed socket (mode 0000).
         // The image user only applies to agent processes exec'd later.
-        if case let .id(uid, _) = config.initProcess.user {
+        if case .id(let uid, _) = config.initProcess.user {
             #expect(uid == 0)
         } else {
             Issue.record("Expected root (.id(uid: 0)) for init process, got \(config.initProcess.user)")
@@ -508,7 +518,7 @@ struct SandboxManagerLifecycleTests {
         )
 
         let config = h.containers.createdConfigs[0]
-        if case let .id(uid, gid) = config.initProcess.user {
+        if case .id(let uid, let gid) = config.initProcess.user {
             #expect(uid == 0)
             #expect(gid == 0)
         } else {
@@ -526,8 +536,9 @@ struct SandboxManagerLifecycleTests {
 
         let config = h.containers.createdConfigs[0]
         let proxyMount = config.mounts.first { $0.destination == "/run/proxy.sock" }
-        #expect(proxyMount != nil,
-                "Proxy socket must be mounted at /run/proxy.sock for proxy-bridge")
+        #expect(
+            proxyMount != nil,
+            "Proxy socket must be mounted at /run/proxy.sock for proxy-bridge")
     }
 
     @Test func createdContainerHasCorrectResourceLimits() async throws {
@@ -540,8 +551,9 @@ struct SandboxManagerLifecycleTests {
 
         let config = h.containers.createdConfigs[0]
         #expect(config.resources.cpus == ProcessInfo.processInfo.processorCount)
-        #expect(config.resources.memoryInBytes == 8 * 1024 * 1024 * 1024,
-                "Memory should be 8GB, not some other value")
+        #expect(
+            config.resources.memoryInBytes == 8 * 1024 * 1024 * 1024,
+            "Memory should be 8GB, not some other value")
     }
 
     @Test func createdContainerRespectsTemplateFlags() async throws {

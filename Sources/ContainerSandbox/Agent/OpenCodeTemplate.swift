@@ -27,18 +27,19 @@ struct OpenCodeTemplate: AgentTemplate {
     /// shell rc files we don't use. Wildcard-allow permissions match the
     /// intent of Claude's --dangerously-skip-permissions: this VM is the
     /// hardened boundary, not the agent's prompt.
-    let containerfileContent: String? = SandboxBaseImage.containerfileContent + ##"""
+    let containerfileContent: String? =
+        SandboxBaseImage.containerfileContent + ##"""
 
 
-    RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path \
-        && test -x /home/sandbox/.opencode/bin/opencode
+            RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path \
+                && test -x /home/sandbox/.opencode/bin/opencode
 
-    RUN mkdir -p /home/sandbox/.config/opencode && printf '%s\n' \
-        '{' \
-        '  "$schema": "https://opencode.ai/config.json",' \
-        '  "permission": {' \
-        '    "*": "allow"' \
-        '  }' \
-        '}' > /home/sandbox/.config/opencode/opencode.json
-    """##
+            RUN mkdir -p /home/sandbox/.config/opencode && printf '%s\n' \
+                '{' \
+                '  "$schema": "https://opencode.ai/config.json",' \
+                '  "permission": {' \
+                '    "*": "allow"' \
+                '  }' \
+                '}' > /home/sandbox/.config/opencode/opencode.json
+            """##
 }

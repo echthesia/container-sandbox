@@ -27,9 +27,10 @@ struct ClaudeTemplate: AgentTemplate {
     let useInit = true
     let defaultNetworkPolicy = NetworkPolicy.allow
 
-    let containerfileContent: String? = SandboxBaseImage.containerfileContent + ##"""
+    let containerfileContent: String? =
+        SandboxBaseImage.containerfileContent + ##"""
 
 
-    RUN curl -fsSL https://claude.ai/install.sh | bash
-    """##
+            RUN curl -fsSL https://claude.ai/install.sh | bash
+            """##
 }

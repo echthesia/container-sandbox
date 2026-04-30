@@ -1,6 +1,7 @@
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 struct ProxyManagerTests {
     // MARK: - startIfNeeded
@@ -59,7 +60,7 @@ struct ProxyManagerTests {
     @Test func socketNeverAppearsThrowsError() async throws {
         let launcher = FakeProxyLauncher()
         let storage = FakeProxyStateStorage()
-        storage.socketAppearsAfterLaunch = false // Socket never appears
+        storage.socketAppearsAfterLaunch = false  // Socket never appears
         let manager = ProxyManager(launcher: launcher, stateStorage: storage)
 
         await #expect(throws: SandboxError.self) {
@@ -91,8 +92,9 @@ struct ProxyManagerTests {
         #expect(!storage.sockets.contains("/tmp/cs-proxy-test.sock"))
         #expect(storage.removedNames.contains("test"))
         // Policy config must survive stop (persists across restart).
-        #expect(storage.writtenPolicies["test"] == .allow,
-                "stop() must preserve policy config for restart")
+        #expect(
+            storage.writtenPolicies["test"] == .allow,
+            "stop() must preserve policy config for restart")
     }
 
     @Test func stopWithNoStateIsNoOp() {

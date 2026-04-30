@@ -1,4 +1,5 @@
 import Foundation
+
 @testable import sandbox
 
 /// Fake process launcher for testing ProxyManager without real processes.

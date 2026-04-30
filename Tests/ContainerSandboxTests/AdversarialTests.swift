@@ -1,8 +1,9 @@
-import ContainerizationOCI
 import ContainerResource
+import ContainerizationOCI
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 // =============================================================================
 // Adversarial tests written from the specification, not the implementation.
@@ -28,28 +29,31 @@ struct AdversarialSandboxNamingTests {
             workspacePath: "/Users/test/Code/caf\u{00E9}"
         )
         let allASCII = name.allSatisfy { $0.isASCII }
-        #expect(allASCII,
-                "Sandbox names should contain only ASCII characters for portability (OCI spec, filesystem encoding, shell escaping). Got: \(name)")
+        #expect(
+            allASCII,
+            "Sandbox names should contain only ASCII characters for portability (OCI spec, filesystem encoding, shell escaping). Got: \(name)")
     }
 
     @Test func sandboxNameWithCJKCharactersShouldBeAsciiOnly() {
         let name = SandboxNaming.sandboxName(
             agent: "shell",
-            workspacePath: "/Users/test/Code/\u{4E16}\u{754C}" // "世界"
+            workspacePath: "/Users/test/Code/\u{4E16}\u{754C}"  // "世界"
         )
         let allASCII = name.allSatisfy { $0.isASCII }
-        #expect(allASCII,
-                "CJK characters in workspace path should not leak into sandbox name. Got: \(name)")
+        #expect(
+            allASCII,
+            "CJK characters in workspace path should not leak into sandbox name. Got: \(name)")
     }
 
     @Test func sandboxNameWithAccentedAgentShouldBeAsciiOnly() {
         let name = SandboxNaming.sandboxName(
-            agent: "ren\u{00E9}", // "rené"
+            agent: "ren\u{00E9}",  // "rené"
             workspacePath: "/Users/test/Code/project"
         )
         let allASCII = name.allSatisfy { $0.isASCII }
-        #expect(allASCII,
-                "Non-ASCII agent name should be sanitized to ASCII. Got: \(name)")
+        #expect(
+            allASCII,
+            "Non-ASCII agent name should be sanitized to ASCII. Got: \(name)")
     }
 
     // Property: sandboxName output should never contain consecutive dashes.
@@ -62,8 +66,9 @@ struct AdversarialSandboxNamingTests {
             SandboxNaming.sandboxName(agent: "...", workspacePath: "/path/to/project"),
         ]
         for name in names {
-            #expect(!name.contains("--"),
-                    "Sandbox name should not contain consecutive dashes: \(name)")
+            #expect(
+                !name.contains("--"),
+                "Sandbox name should not contain consecutive dashes: \(name)")
         }
     }
 }
@@ -86,8 +91,9 @@ struct AdversarialDomainFilterTests {
         )
         let filter = DomainFilter(policy: policy)
         let decision = filter.evaluate(host: "10.0.0.1", port: 443)
-        #expect(decision != .allow,
-                "IPv4-mapped IPv6 '::ffff:10.0.0.1' in blocklist should block plain IPv4 '10.0.0.1'")
+        #expect(
+            decision != .allow,
+            "IPv4-mapped IPv6 '::ffff:10.0.0.1' in blocklist should block plain IPv4 '10.0.0.1'")
     }
 
     /// Bug #3: Reverse direction of bug #2.
@@ -100,8 +106,9 @@ struct AdversarialDomainFilterTests {
         )
         let filter = DomainFilter(policy: policy)
         let decision = filter.evaluate(host: "::ffff:10.0.0.1", port: 443)
-        #expect(decision != .allow,
-                "Plain IPv4 '10.0.0.1' in blocklist should block IPv4-mapped IPv6 '::ffff:10.0.0.1'")
+        #expect(
+            decision != .allow,
+            "Plain IPv4 '10.0.0.1' in blocklist should block IPv4-mapped IPv6 '::ffff:10.0.0.1'")
     }
 
     @Test func ipv4MappedIPv6InAllowlistShouldAllowPlainIPv4() {
@@ -114,8 +121,9 @@ struct AdversarialDomainFilterTests {
         )
         let filter = DomainFilter(policy: policy)
         let decision = filter.evaluate(host: "93.184.216.34", port: 443)
-        #expect(decision == .allow,
-                "IPv4-mapped IPv6 in allowlist should allow the equivalent plain IPv4 address")
+        #expect(
+            decision == .allow,
+            "IPv4-mapped IPv6 in allowlist should allow the equivalent plain IPv4 address")
     }
 
     @Test func plainIPv4InAllowlistShouldAllowIPv4MappedIPv6() {
@@ -127,8 +135,9 @@ struct AdversarialDomainFilterTests {
         )
         let filter = DomainFilter(policy: policy)
         let decision = filter.evaluate(host: "::ffff:93.184.216.34", port: 443)
-        #expect(decision == .allow,
-                "Plain IPv4 in allowlist should allow IPv4-mapped IPv6 equivalent")
+        #expect(
+            decision == .allow,
+            "Plain IPv4 in allowlist should allow IPv4-mapped IPv6 equivalent")
     }
 }
 
@@ -153,8 +162,9 @@ struct AdversarialNetworkPolicyTests {
             blockedHosts: [],
             blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
         )
-        #expect(a == b,
-                "Trailing dot should not affect host equality — 'example.com.' and 'example.com' are the same DNS name")
+        #expect(
+            a == b,
+            "Trailing dot should not affect host equality — 'example.com.' and 'example.com' are the same DNS name")
     }
 
     @Test func equalityWithTrailingDotInBlockedHosts() {
@@ -170,8 +180,9 @@ struct AdversarialNetworkPolicyTests {
             blockedHosts: ["evil.com"],
             blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
         )
-        #expect(a == b,
-                "Trailing dot in blockedHosts should not break equality")
+        #expect(
+            a == b,
+            "Trailing dot in blockedHosts should not break equality")
     }
 
     /// Bug #5: normalizedSet doesn't trim whitespace.
@@ -188,8 +199,9 @@ struct AdversarialNetworkPolicyTests {
             blockedHosts: [],
             blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
         )
-        #expect(a == b,
-                "Leading whitespace should not affect host equality — DomainFilter.parseHosts trims whitespace")
+        #expect(
+            a == b,
+            "Leading whitespace should not affect host equality — DomainFilter.parseHosts trims whitespace")
     }
 
     @Test func equalityWithTrailingWhitespaceInHosts() {
@@ -205,8 +217,9 @@ struct AdversarialNetworkPolicyTests {
             blockedHosts: [],
             blockedCIDRs: NetworkPolicy.defaultBlockedCIDRs
         )
-        #expect(a == b,
-                "Trailing whitespace should not affect host equality")
+        #expect(
+            a == b,
+            "Trailing whitespace should not affect host equality")
     }
 
     // Bug #6: NormalizedCIDR fails to parse CIDRs with whitespace because
@@ -214,20 +227,23 @@ struct AdversarialNetworkPolicyTests {
 
     @Test func normalizedCIDRWithLeadingWhitespace() {
         let cidr = NormalizedCIDR(" 10.0.0.0/8")
-        #expect(cidr != nil,
-                "NormalizedCIDR should handle leading whitespace — inet_pton rejects it, causing silent CIDR drop")
+        #expect(
+            cidr != nil,
+            "NormalizedCIDR should handle leading whitespace — inet_pton rejects it, causing silent CIDR drop")
     }
 
     @Test func normalizedCIDRWithTrailingWhitespace() {
         let cidr = NormalizedCIDR("10.0.0.0/8 ")
-        #expect(cidr != nil,
-                "NormalizedCIDR should handle trailing whitespace")
+        #expect(
+            cidr != nil,
+            "NormalizedCIDR should handle trailing whitespace")
     }
 
     @Test func normalizedCIDRWithWhitespaceIPv6() {
         let cidr = NormalizedCIDR(" fc00::/7")
-        #expect(cidr != nil,
-                "NormalizedCIDR should handle whitespace in IPv6 CIDRs")
+        #expect(
+            cidr != nil,
+            "NormalizedCIDR should handle whitespace in IPv6 CIDRs")
     }
 
     @Test func policyEqualityWithWhitespaceCIDR() throws {
@@ -245,21 +261,22 @@ struct AdversarialNetworkPolicyTests {
             blockedHosts: [],
             blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))]
         )
-        #expect(a == b,
-                "Whitespace in CIDR should not break policy equality — the range is identical")
+        #expect(
+            a == b,
+            "Whitespace in CIDR should not break policy equality — the range is identical")
     }
 
     /// Bug #10: init(from decoder:) rejects whitespace CIDRs via NormalizedCIDR
     /// validation, even though isBlockedCIDR handles whitespace at runtime.
     @Test func decodePolicyWithWhitespaceCIDR() throws {
         let json = """
-        {
-            "direction": "deny",
-            "allowedHosts": [],
-            "blockedHosts": [],
-            "blockedCIDRs": [" 10.0.0.0/8"]
-        }
-        """
+            {
+                "direction": "deny",
+                "allowedHosts": [],
+                "blockedHosts": [],
+                "blockedCIDRs": [" 10.0.0.0/8"]
+            }
+            """
         let data = Data(json.utf8)
         // This should succeed — the CIDR is valid, just has whitespace.
         // But NormalizedCIDR(" 10.0.0.0/8") returns nil, causing decode to throw.
@@ -285,8 +302,9 @@ struct AdversarialSandboxManagerTests {
 
         let label1 = SandboxManager.extraWorkspacesLabel(["\(extra):ro", extra])
         let label2 = SandboxManager.extraWorkspacesLabel([extra, "\(extra):ro"])
-        #expect(label1 == label2,
-                "Same paths with different :ro ordering should produce identical labels. Got '\(label1)' vs '\(label2)'")
+        #expect(
+            label1 == label2,
+            "Same paths with different :ro ordering should produce identical labels. Got '\(label1)' vs '\(label2)'")
     }
 
     @Test func extraWorkspacesLabelOrderIndependentMultiplePaths() {
@@ -303,8 +321,9 @@ struct AdversarialSandboxManagerTests {
         // Different ordering of the same two paths should produce the same label.
         let label1 = SandboxManager.extraWorkspacesLabel([a, b])
         let label2 = SandboxManager.extraWorkspacesLabel([b, a])
-        #expect(label1 == label2,
-                "Extra workspace labels should be order-independent. Got '\(label1)' vs '\(label2)'")
+        #expect(
+            label1 == label2,
+            "Extra workspace labels should be order-independent. Got '\(label1)' vs '\(label2)'")
     }
 }
 
@@ -321,8 +340,9 @@ struct AdversarialPropertyTests {
         // Parse the output back to tuples and dedup again.
         let parsed = once.compactMap { parseEnvEntry($0) }
         let twice = deduplicateEnvironment(parsed)
-        #expect(once == twice,
-                "deduplicateEnvironment should be idempotent")
+        #expect(
+            once == twice,
+            "deduplicateEnvironment should be idempotent")
     }
 
     /// After deduplication, each key should appear exactly once.
@@ -332,8 +352,9 @@ struct AdversarialPropertyTests {
         ]
         let result = deduplicateEnvironment(input)
         let keys = result.compactMap { parseEnvEntry($0)?.key }
-        #expect(keys.count == Set(keys).count,
-                "Each key should appear exactly once after deduplication")
+        #expect(
+            keys.count == Set(keys).count,
+            "Each key should appear exactly once after deduplication")
     }
 
     // Last-writer-wins: the LAST value for each key should be preserved.
@@ -343,8 +364,9 @@ struct AdversarialPropertyTests {
         ]
         let result = deduplicateEnvironment(input)
         let value = try parseEnvEntry(#require(result.first))?.value
-        #expect(value == "last",
-                "Last occurrence of a key should win. Got: \(value ?? "nil")")
+        #expect(
+            value == "last",
+            "Last occurrence of a key should win. Got: \(value ?? "nil")")
     }
 
     /// NetworkPolicy JSON roundtrip should preserve equality.
@@ -353,17 +375,19 @@ struct AdversarialPropertyTests {
             .allow,
             .deny,
             .deny(allowedHosts: ["example.com", "*.test.org:8080"]),
-            NetworkPolicy(direction: .allow, allowedHosts: ["MIXED.Case.Host"],
-                          blockedHosts: ["blocked.example.com"],
-                          blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))]),
+            NetworkPolicy(
+                direction: .allow, allowedHosts: ["MIXED.Case.Host"],
+                blockedHosts: ["blocked.example.com"],
+                blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))]),
         ]
         let encoder = JSONEncoder()
         let decoder = JSONDecoder()
         for policy in policies {
             let data = try encoder.encode(policy)
             let decoded = try decoder.decode(NetworkPolicy.self, from: data)
-            #expect(policy == decoded,
-                    "NetworkPolicy should survive JSON roundtrip")
+            #expect(
+                policy == decoded,
+                "NetworkPolicy should survive JSON roundtrip")
         }
     }
 
@@ -380,8 +404,9 @@ struct AdversarialPropertyTests {
         for input in inputs {
             let hash = SandboxNaming.shortHash(input)
             #expect(hash.count == 8, "shortHash should be 8 hex chars, got \(hash.count) for input length \(input.count)")
-            #expect(hash.allSatisfy { "0123456789abcdef".contains($0) },
-                    "shortHash should contain only hex characters")
+            #expect(
+                hash.allSatisfy { "0123456789abcdef".contains($0) },
+                "shortHash should contain only hex characters")
         }
     }
 
@@ -396,8 +421,9 @@ struct AdversarialPropertyTests {
             }
             let reconstructed = "\(key)=\(value)"
             let reparsed = parseEnvEntry(reconstructed)
-            #expect(reparsed?.key == key && reparsed?.value == value,
-                    "Roundtrip failed for '\(entry)': reconstructed '\(reconstructed)' parsed to \(String(describing: reparsed))")
+            #expect(
+                reparsed?.key == key && reparsed?.value == value,
+                "Roundtrip failed for '\(entry)': reconstructed '\(reconstructed)' parsed to \(String(describing: reparsed))")
         }
     }
 }

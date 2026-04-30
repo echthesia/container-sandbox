@@ -1,7 +1,8 @@
 import ContainerResource
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 struct ExecEnvironmentTests {
     // MARK: - Layer ordering
@@ -56,8 +57,9 @@ struct ExecEnvironmentTests {
         let httpsProxy = env.first { $0.hasPrefix("HTTPS_PROXY=") }
         let noProxy = env.first { $0.hasPrefix("NO_PROXY=") }
         #expect(httpsProxy == "HTTPS_PROXY=\(expectedUrl)")
-        #expect(noProxy == "NO_PROXY=localhost,127.0.0.1",
-                "NO_PROXY must include localhost and 127.0.0.1 to avoid proxying container-local traffic")
+        #expect(
+            noProxy == "NO_PROXY=localhost,127.0.0.1",
+            "NO_PROXY must include localhost and 127.0.0.1 to avoid proxying container-local traffic")
     }
 
     @Test func proxyVarsOverrideExtras() {
@@ -202,8 +204,9 @@ struct TermInjectionTests {
         // Both execEnvironment (exec path) and processConfiguration (run path)
         // should inject TERM when TTY is requested, matching Docker's behavior.
         let execEnv = SandboxManager.execEnvironment(base: ["PATH=/usr/bin"], tty: true)
-        #expect(execEnv.contains { $0.hasPrefix("TERM=") },
-                "exec path should inject TERM for TTY sessions")
+        #expect(
+            execEnv.contains { $0.hasPrefix("TERM=") },
+            "exec path should inject TERM for TTY sessions")
 
         let template = ShellTemplate()
         let config = template.processConfiguration(
@@ -213,13 +216,15 @@ struct TermInjectionTests {
             ),
             workingDirectory: "/tmp"
         )
-        #expect(config.environment.contains { $0.hasPrefix("TERM=") },
-                "run path should inject TERM for TTY sessions")
+        #expect(
+            config.environment.contains { $0.hasPrefix("TERM=") },
+            "run path should inject TERM for TTY sessions")
     }
 
     @Test func execPathOmitsTERMWithoutTTY() {
         let env = SandboxManager.execEnvironment(base: ["PATH=/usr/bin"], tty: false)
-        #expect(!env.contains { $0.hasPrefix("TERM=") },
-                "non-TTY exec should not inject TERM")
+        #expect(
+            !env.contains { $0.hasPrefix("TERM=") },
+            "non-TTY exec should not inject TERM")
     }
 }

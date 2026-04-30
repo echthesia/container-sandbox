@@ -1,10 +1,11 @@
 import ContainerAPIClient
+import ContainerResource
 import Containerization
 import ContainerizationError
 import ContainerizationOCI
 import ContainerizationOS
-import ContainerResource
 import Foundation
+
 @testable import sandbox
 
 // MARK: - Fake ContainerOperations
@@ -114,11 +115,13 @@ func makeSnapshot(
     status: RuntimeStatus = .stopped,
     labels: [String: String] = [:]
 ) -> ContainerSnapshot {
-    var cfg = config ?? ContainerConfiguration(
-        id: id ?? "test",
-        image: ImageDescription(reference: "test:latest", descriptor: Descriptor(mediaType: "", digest: "sha256:fake", size: 0)),
-        process: ProcessConfiguration(executable: "/bin/sleep", arguments: ["infinity"], environment: [])
-    )
+    var cfg =
+        config
+        ?? ContainerConfiguration(
+            id: id ?? "test",
+            image: ImageDescription(reference: "test:latest", descriptor: Descriptor(mediaType: "", digest: "sha256:fake", size: 0)),
+            process: ProcessConfiguration(executable: "/bin/sleep", arguments: ["infinity"], environment: [])
+        )
     for (k, v) in labels {
         cfg.labels[k] = v
     }

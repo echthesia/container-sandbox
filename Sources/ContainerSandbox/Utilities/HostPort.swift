@@ -29,10 +29,10 @@ func parseHostPort(_ input: String) -> (host: String, port: Int?) {
 
     // Handle IPv6 in brackets: [::1]:443
     if input.hasPrefix("["), let bracketEnd = input.firstIndex(of: "]") {
-        let host = String(input[input.index(after: input.startIndex) ..< bracketEnd])
+        let host = String(input[input.index(after: input.startIndex)..<bracketEnd])
         let afterBracket = input[input.index(after: bracketEnd)...]
         if afterBracket.hasPrefix(":"), let port = Int(afterBracket.dropFirst()),
-           port >= 0, port <= 65535
+            port >= 0, port <= 65535
         {
             return (host, port)
         }

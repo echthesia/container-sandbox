@@ -1,5 +1,6 @@
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 struct NamingTests {
     @Test func includesDirnameAndHash() {
@@ -110,7 +111,7 @@ struct NamingTests {
         // Generate many names with same basename but different parent paths
         // and verify no hash collisions in the batch
         var hashes = Set<String>()
-        for i in 0 ..< 1000 {
+        for i in 0..<1000 {
             let hash = SandboxNaming.shortHash("/path/\(i)/project")
             hashes.insert(hash)
         }

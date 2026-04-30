@@ -67,7 +67,7 @@ struct DomainFilter {
         // IPv4-mapped IPv6 (::ffff:a.b.c.d) — also test the embedded IPv4
         // bytes against IPv4 CIDRs (catches e.g. ::ffff:10.0.0.5 vs 10.0.0.0/8).
         if ipBytes.count == 16, Self.mappedIPv4(ipBytes) != nil {
-            let v4Bytes = Array(ipBytes[12 ..< 16])
+            let v4Bytes = Array(ipBytes[12..<16])
             for cidr in policy.blockedCIDRs where cidr.contains(bytes: v4Bytes) {
                 return true
             }
@@ -164,15 +164,15 @@ extension DomainFilter {
     /// Match a pre-resolved host against pre-parsed host entries.
     private func matchesHost(_ resolved: ResolvedHost, port: Int, in hosts: ParsedHosts) -> Bool {
         switch resolved {
-        case let .ipv4(addr):
+        case .ipv4(let addr):
             return hosts.ipv4s.contains { entry in
                 (entry.port == nil || entry.port == port) && entry.addr == addr
             }
-        case let .ipv6(bytes):
+        case .ipv6(let bytes):
             return hosts.ipv6s.contains { entry in
                 (entry.port == nil || entry.port == port) && entry.addr == bytes
             }
-        case let .domain(host):
+        case .domain(let host):
             return matchesDomain(host: host, port: port, patterns: hosts.domains)
         }
     }
@@ -181,8 +181,8 @@ extension DomainFilter {
     /// IPv6 address (::ffff:a.b.c.d), else nil.
     static func mappedIPv4(_ bytes: [UInt8]) -> UInt32? {
         guard bytes.count == 16,
-              bytes[0 ..< 10].allSatisfy({ $0 == 0 }),
-              bytes[10] == 0xFF, bytes[11] == 0xFF
+            bytes[0..<10].allSatisfy({ $0 == 0 }),
+            bytes[10] == 0xFF, bytes[11] == 0xFF
         else { return nil }
         return (UInt32(bytes[12]) << 24) | (UInt32(bytes[13]) << 16) | (UInt32(bytes[14]) << 8) | UInt32(bytes[15])
     }
@@ -198,7 +198,7 @@ extension DomainFilter {
 
             // Wildcard match: *.example.com matches foo.example.com and bar.foo.example.com.
             if entry.pattern.hasPrefix("*.") {
-                let suffix = String(entry.pattern.dropFirst(1)) // ".example.com"
+                let suffix = String(entry.pattern.dropFirst(1))  // ".example.com"
                 if host.hasSuffix(suffix) && host != String(suffix.dropFirst()) {
                     return true
                 }

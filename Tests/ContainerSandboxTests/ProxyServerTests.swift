@@ -1,8 +1,9 @@
 import Foundation
 @preconcurrency import NIOCore
 import NIOPosix
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 @Suite(.serialized) struct ProxyServerTests {
     // MARK: - CONNECT (HTTPS tunneling)
@@ -113,8 +114,9 @@ import Testing
         }.value
 
         #expect(echoed.contains("200"))
-        #expect(echoed.contains(payload),
-                "Proxy dropped bytes pipelined after the CONNECT header. Got: \(echoed)")
+        #expect(
+            echoed.contains(payload),
+            "Proxy dropped bytes pipelined after the CONNECT header. Got: \(echoed)")
     }
 
     // MARK: - Plain HTTP forward proxy
@@ -134,7 +136,7 @@ import Testing
         let response = try await proxySend(
             policy: policy,
             request:
-            "GET http://127.0.0.1:\(echo.port)/test HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\n\r\n"
+                "GET http://127.0.0.1:\(echo.port)/test HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\n\r\n"
         )
         let elapsed = ContinuousClock.now - start
         // The echo server echoes back the re-encoded request. Verify forwarding, not 403.
@@ -161,7 +163,7 @@ import Testing
         let response = try await proxySend(
             policy: policy,
             request:
-            "POST http://127.0.0.1:\(echo.port)/submit HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
+                "POST http://127.0.0.1:\(echo.port)/submit HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\nContent-Length: \(body.utf8.count)\r\n\r\n\(body)"
         )
         let elapsed = ContinuousClock.now - start
         #expect(!response.contains("HTTP/1.1 403"))
@@ -187,7 +189,7 @@ import Testing
         let response = try await proxySend(
             policy: .allow,
             request:
-            "GET http://127.0.0.1:\(echo.port)/ HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\n\r\n"
+                "GET http://127.0.0.1:\(echo.port)/ HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\n\r\n"
         )
         #expect(response.contains("HTTP/1.1 403"))
         #expect(response.contains("private IP"))
@@ -221,8 +223,9 @@ import Testing
         )
         // Correct behavior: strip userinfo, forward to 127.0.0.1:port, get echo back.
         // Actual behavior: misparses host, gets 502 (DNS failure) or connects to wrong host.
-        #expect(response.contains("GET /path HTTP/1.1"),
-                "Proxy should strip userinfo and forward to the real host. Got: \(response.prefix(200))")
+        #expect(
+            response.contains("GET /path HTTP/1.1"),
+            "Proxy should strip userinfo and forward to the real host. Got: \(response.prefix(200))")
     }
 
     @Test func plainHTTPUserinfoDoesNotBypassBlocklist() async throws {
@@ -236,8 +239,9 @@ import Testing
         // With the userinfo bug, the parsed host is "good.example.com@evil.com"
         // which doesn't match the allowlist → denied. So the bug accidentally
         // fails safe here. But the error reason will reference the wrong host.
-        #expect(response.contains("HTTP/1.1 403") || response.contains("HTTP/1.1 502"),
-                "Request with userinfo to blocked host should not succeed")
+        #expect(
+            response.contains("HTTP/1.1 403") || response.contains("HTTP/1.1 502"),
+            "Request with userinfo to blocked host should not succeed")
     }
 
     // MARK: - SOCKS5
@@ -250,10 +254,10 @@ import Testing
         )
         // Greeting reply [0x05, 0x00] + error reply [0x05, 0x02, ...]
         #expect(response.count >= 4)
-        #expect(response[0] == 0x05) // greeting version
-        #expect(response[1] == 0x00) // no auth
-        #expect(response[2] == 0x05) // request version
-        #expect(response[3] == 0x02) // connection not allowed
+        #expect(response[0] == 0x05)  // greeting version
+        #expect(response[1] == 0x00)  // no auth
+        #expect(response[2] == 0x05)  // request version
+        #expect(response[3] == 0x02)  // connection not allowed
     }
 
     @Test func socks5AllowedHostConnects() async throws {
@@ -302,10 +306,10 @@ import Testing
             policy: .allow,
             host: .ipv4(127, 0, 0, 1),
             port: 80,
-            command: 0x02 // BIND
+            command: 0x02  // BIND
         )
         #expect(response.count >= 4)
-        #expect(response[3] == 0x07) // command not supported
+        #expect(response[3] == 0x07)  // command not supported
     }
 
     @Test func socks5CIDRBlocksPrivateIP() async throws {
@@ -319,7 +323,7 @@ import Testing
             port: echo.port
         )
         #expect(response.count >= 4)
-        #expect(response[3] == 0x02) // connection not allowed (CIDR)
+        #expect(response[3] == 0x02)  // connection not allowed (CIDR)
     }
 
     @Test func socks5IPv6AddressType() async throws {
@@ -331,10 +335,10 @@ import Testing
             port: 443
         )
         #expect(response.count >= 4)
-        #expect(response[0] == 0x05) // greeting version
-        #expect(response[1] == 0x00) // no auth
-        #expect(response[2] == 0x05) // request version
-        #expect(response[3] == 0x02) // connection not allowed
+        #expect(response[0] == 0x05)  // greeting version
+        #expect(response[1] == 0x00)  // no auth
+        #expect(response[2] == 0x05)  // request version
+        #expect(response[3] == 0x02)  // connection not allowed
     }
 
     @Test func socks5InvalidVersionRejected() async throws {
@@ -355,8 +359,8 @@ import Testing
 
             // SOCKS4 greeting: version 4 (starts with 0x04, but detection routes 0x04 to HTTP)
             // Send 0x05 version with 0x04 in the SOCKS5 version field of the request
-            var data: [UInt8] = [0x05, 0x01, 0x00] // valid greeting
-            data += [0x04, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50] // bad version in request
+            var data: [UInt8] = [0x05, 0x01, 0x00]  // valid greeting
+            data += [0x04, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50]  // bad version in request
             data.withUnsafeBufferPointer { ptr in
                 // swiftlint:disable:next force_unwrapping
                 _ = Darwin.write(fd, ptr.baseAddress!, data.count)
@@ -367,7 +371,7 @@ import Testing
         // Greeting reply + error reply (version mismatch in request)
         #expect(response.count >= 4)
         #expect(response[2] == 0x05)
-        #expect(response[3] == 0x01) // general failure
+        #expect(response[3] == 0x01)  // general failure
     }
 
     // MARK: - HTTP Helpers
@@ -461,7 +465,7 @@ import Testing
 
     enum Socks5Host {
         case ipv4(UInt8, UInt8, UInt8, UInt8)
-        case ipv6([UInt8]) // 16 bytes
+        case ipv6([UInt8])  // 16 bytes
         case domain(String)
     }
 
@@ -492,12 +496,12 @@ import Testing
             data += [0x05, command, 0x00]
             // Address
             switch host {
-            case let .ipv4(a, b, c, d):
+            case .ipv4(let a, let b, let c, let d):
                 data += [0x01, a, b, c, d]
-            case let .ipv6(bytes):
+            case .ipv6(let bytes):
                 precondition(bytes.count == 16)
                 data += [0x04] + bytes
-            case let .domain(name):
+            case .domain(let name):
                 data += [0x03, UInt8(name.utf8.count)]
                 data += Array(name.utf8)
             }
@@ -552,12 +556,12 @@ import Testing
             // Build connect request
             var request: [UInt8] = [0x05, 0x01, 0x00]
             switch host {
-            case let .ipv4(a, b, c, d):
+            case .ipv4(let a, let b, let c, let d):
                 request += [0x01, a, b, c, d]
-            case let .ipv6(bytes):
+            case .ipv6(let bytes):
                 precondition(bytes.count == 16)
                 request += [0x04] + bytes
-            case let .domain(name):
+            case .domain(let name):
                 request += [0x03, UInt8(name.utf8.count)]
                 request += Array(name.utf8)
             }
@@ -593,7 +597,7 @@ import Testing
     // MARK: - Common Helpers
 
     private func waitForSocket(_ path: String) async throws {
-        for _ in 0 ..< 100 {
+        for _ in 0..<100 {
             if FileManager.default.fileExists(atPath: path) { return }
             try await Task.sleep(for: .milliseconds(10))
         }

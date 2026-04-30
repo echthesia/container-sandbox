@@ -1,8 +1,9 @@
-import ContainerizationOCI
 import ContainerResource
+import ContainerizationOCI
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 // =============================================================================
 // Red tests exposing real bugs across the codebase. Each test documents what
@@ -16,20 +17,24 @@ struct NetworkPolicyEqualityBugs {
         // normalizedCIDRSet doesn't lowercase the address portion,
         // so "FC00::/7" and "fc00::/7" are treated as different CIDRs
         // despite representing the same network range.
-        let a = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("FC00::/7"))])
-        let b = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("fc00::/7"))])
+        let a = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("FC00::/7"))])
+        let b = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("fc00::/7"))])
         #expect(a == b, "CIDRs should be compared case-insensitively for hex digits")
     }
 
     @Test func ipv6NormalizationInCidrEquality() throws {
         // Two string representations of the same IPv6 address are not
         // recognized as equal because normalizedCIDRSet uses string comparison.
-        let a = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("::1/128"))])
-        let b = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("0000:0000:0000:0000:0000:0000:0000:0001/128"))])
+        let a = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("::1/128"))])
+        let b = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("0000:0000:0000:0000:0000:0000:0000:0001/128"))])
         #expect(a == b, "Equivalent IPv6 addresses should be equal in CIDR comparison")
     }
 }
@@ -43,32 +48,38 @@ struct DomainFilterPatternNormalizationBugs {
 
     @Test func allowlistPatternTrailingDotNotStripped() {
         let filter = DomainFilter(policy: .deny(allowedHosts: ["example.com."]))
-        #expect(filter.evaluate(host: "example.com", port: 443) == .allow,
-                "Pattern 'example.com.' should match host 'example.com'")
+        #expect(
+            filter.evaluate(host: "example.com", port: 443) == .allow,
+            "Pattern 'example.com.' should match host 'example.com'")
     }
 
     @Test func blocklistPatternTrailingDotNotStripped() {
-        let policy = NetworkPolicy(direction: .allow, allowedHosts: [],
-                                   blockedHosts: ["evil.com."], blockedCIDRs: [])
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["evil.com."], blockedCIDRs: [])
         let filter = DomainFilter(policy: policy)
-        #expect(filter.evaluate(host: "evil.com", port: 443) != .allow,
-                "Blocked pattern 'evil.com.' should block 'evil.com'")
+        #expect(
+            filter.evaluate(host: "evil.com", port: 443) != .allow,
+            "Blocked pattern 'evil.com.' should block 'evil.com'")
     }
 
     @Test func wildcardAllowlistPatternTrailingDotNotStripped() {
         // "*.example.com." → suffix is ".example.com." which won't match
         // "sub.example.com" because the host doesn't end with ".example.com."
         let filter = DomainFilter(policy: .deny(allowedHosts: ["*.example.com."]))
-        #expect(filter.evaluate(host: "sub.example.com", port: 443) == .allow,
-                "Wildcard pattern '*.example.com.' should match subdomains")
+        #expect(
+            filter.evaluate(host: "sub.example.com", port: 443) == .allow,
+            "Wildcard pattern '*.example.com.' should match subdomains")
     }
 
     @Test func wildcardBlocklistPatternTrailingDotNotStripped() {
-        let policy = NetworkPolicy(direction: .allow, allowedHosts: [],
-                                   blockedHosts: ["*.evil.com."], blockedCIDRs: [])
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["*.evil.com."], blockedCIDRs: [])
         let filter = DomainFilter(policy: policy)
-        #expect(filter.evaluate(host: "sub.evil.com", port: 443) != .allow,
-                "Wildcard blocked pattern '*.evil.com.' should block subdomains")
+        #expect(
+            filter.evaluate(host: "sub.evil.com", port: 443) != .allow,
+            "Wildcard blocked pattern '*.evil.com.' should block subdomains")
     }
 }
 
@@ -78,20 +89,24 @@ struct DomainFilterWhitespaceBugs {
     @Test func patternWithLeadingWhitespaceDoesNotMatch() {
         // Leading whitespace in a pattern prevents exact match because
         // " evil.com" != "evil.com". Patterns should be trimmed.
-        let policy = NetworkPolicy(direction: .allow, allowedHosts: [],
-                                   blockedHosts: [" evil.com"], blockedCIDRs: [])
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: [" evil.com"], blockedCIDRs: [])
         let filter = DomainFilter(policy: policy)
-        #expect(filter.evaluate(host: "evil.com", port: 443) != .allow,
-                "Pattern with leading whitespace should still match the host")
+        #expect(
+            filter.evaluate(host: "evil.com", port: 443) != .allow,
+            "Pattern with leading whitespace should still match the host")
     }
 
     @Test func cidrWithLeadingWhitespaceFailsToBlock() throws {
         // Leading whitespace makes inet_pton fail, silently disabling the CIDR rule.
-        let policy = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                       blockedCIDRs: [#require(NormalizedCIDR(" 10.0.0.0/8"))])
+        let policy = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR(" 10.0.0.0/8"))])
         let filter = DomainFilter(policy: policy)
-        #expect(filter.isBlockedCIDR("10.0.0.1"),
-                "Leading whitespace in CIDR should not disable the block rule")
+        #expect(
+            filter.isBlockedCIDR("10.0.0.1"),
+            "Leading whitespace in CIDR should not disable the block rule")
     }
 
     @Test func multipleTrailingDotsNotFullyStripped() {
@@ -99,8 +114,9 @@ struct DomainFilterWhitespaceBugs {
         // ("example.com..") becomes "example.com." after stripping, which doesn't
         // match the pattern "example.com".
         let filter = DomainFilter(policy: .deny(allowedHosts: ["example.com"]))
-        #expect(filter.evaluate(host: "example.com..", port: 443) == .allow,
-                "All trailing dots should be stripped to match the base domain")
+        #expect(
+            filter.evaluate(host: "example.com..", port: 443) == .allow,
+            "All trailing dots should be stripped to match the base domain")
     }
 }
 
@@ -179,8 +195,9 @@ struct SandboxManagerDuplicateMountBugs {
         let config = containers.createdConfigs[0]
         let resolvedExtra = SandboxManager.resolveWorkspacePath(edgeCaseExtra)
         let mountsAtDest = config.mounts.filter { $0.destination == resolvedExtra }
-        #expect(mountsAtDest.count <= 1,
-                "Should not create \(mountsAtDest.count) conflicting mounts at '\(resolvedExtra)'")
+        #expect(
+            mountsAtDest.count <= 1,
+            "Should not create \(mountsAtDest.count) conflicting mounts at '\(resolvedExtra)'")
     }
 
     @Test func sameExtraWorkspaceDifferentFormsCreatesDuplicateMounts() async throws {
@@ -202,8 +219,9 @@ struct SandboxManagerDuplicateMountBugs {
         let config = containers.createdConfigs[0]
         let resolvedExtra = SandboxManager.resolveWorkspacePath(edgeCaseExtra)
         let mountsAtDest = config.mounts.filter { $0.destination == resolvedExtra }
-        #expect(mountsAtDest.count <= 1,
-                "Same directory via different paths should not create duplicate mounts")
+        #expect(
+            mountsAtDest.count <= 1,
+            "Same directory via different paths should not create duplicate mounts")
     }
 }
 
@@ -216,8 +234,9 @@ struct SandboxManagerLabelBugs {
         // directory "a,") collides with two paths "/a" and "/b" joined as "/a,/b".
         let singlePathWithComma = SandboxManager.extraWorkspacesLabel(["/a,/b"])
         let twoSeparatePaths = SandboxManager.extraWorkspacesLabel(["/a", "/b"])
-        #expect(singlePathWithComma != twoSeparatePaths,
-                "Label for path '/a,/b' should differ from label for paths '/a' + '/b'")
+        #expect(
+            singlePathWithComma != twoSeparatePaths,
+            "Label for path '/a,/b' should differ from label for paths '/a' + '/b'")
     }
 }
 
@@ -262,8 +281,9 @@ struct SandboxManagerInputValidationBugs {
         let config = containers.createdConfigs[0]
         let resolvedCwd = SandboxManager.resolveWorkspacePath("")
         let cwdMounts = config.mounts.filter { $0.destination == resolvedCwd }
-        #expect(cwdMounts.isEmpty,
-                "Empty string extra workspace should not silently mount '\(resolvedCwd)'")
+        #expect(
+            cwdMounts.isEmpty,
+            "Empty string extra workspace should not silently mount '\(resolvedCwd)'")
     }
 }
 
@@ -274,8 +294,9 @@ struct SandboxNamingInputValidationBugs {
         // The agent name is sanitized — slashes are removed so path traversal
         // via "../" is impossible, and validateName rejects names containing "..".
         let name = SandboxNaming.sandboxName(agent: "../evil", workspacePath: "/path/to/project")
-        #expect(!name.contains("/"),
-                "Slashes in agent name should be stripped")
+        #expect(
+            !name.contains("/"),
+            "Slashes in agent name should be stripped")
         // validateName provides defense-in-depth: even if a crafted name
         // somehow contained "..", it would be rejected before use.
         #expect(throws: SandboxError.self) {
@@ -287,8 +308,9 @@ struct SandboxNamingInputValidationBugs {
         // A "/" in the agent name creates nested path components when used
         // as a filename key in state storage.
         let name = SandboxNaming.sandboxName(agent: "agent/name", workspacePath: "/path/to/project")
-        #expect(!name.contains("/"),
-                "Agent name should not contain path separator characters")
+        #expect(
+            !name.contains("/"),
+            "Agent name should not contain path separator characters")
     }
 
     @Test func emptyAgentNameProducesDoubleDash() {
@@ -296,7 +318,8 @@ struct SandboxNamingInputValidationBugs {
         // The name is used as a container ID and state storage key, so it should
         // be validated or the empty agent rejected.
         let name = SandboxNaming.sandboxName(agent: "", workspacePath: "/path/to/project")
-        #expect(!name.contains("--"),
-                "Empty agent name should not produce a double-dash in the sandbox name")
+        #expect(
+            !name.contains("--"),
+            "Empty agent name should not produce a double-dash in the sandbox name")
     }
 }

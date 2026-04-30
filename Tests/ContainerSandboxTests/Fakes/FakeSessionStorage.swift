@@ -1,4 +1,5 @@
 import Foundation
+
 @testable import sandbox
 
 /// In-memory session storage for testing SessionTracker without filesystem.

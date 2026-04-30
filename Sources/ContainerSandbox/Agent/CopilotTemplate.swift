@@ -22,10 +22,11 @@ struct CopilotTemplate: AgentTemplate {
     let requiresVirtualization = false
     let useInit = true
 
-    let containerfileContent: String? = SandboxBaseImage.containerfileContent + ##"""
+    let containerfileContent: String? =
+        SandboxBaseImage.containerfileContent + ##"""
 
 
-    RUN npm install -g @github/copilot \
-        && test -x /home/sandbox/.local/bin/copilot
-    """##
+            RUN npm install -g @github/copilot \
+                && test -x /home/sandbox/.local/bin/copilot
+            """##
 }

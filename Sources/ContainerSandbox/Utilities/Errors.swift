@@ -18,33 +18,33 @@ enum SandboxError: LocalizedError {
 
     var errorDescription: String? {
         switch self {
-        case let .unknownAgent(name):
+        case .unknownAgent(let name):
             "Unknown agent '\(name)'. Available agents: \(AgentRegistry.availableAgents.joined(separator: ", "))"
-        case let .sandboxNotFound(name):
+        case .sandboxNotFound(let name):
             "Sandbox '\(name)' not found."
-        case let .workspaceNotFound(path):
+        case .workspaceNotFound(let path):
             "Workspace directory not found: \(path)"
-        case let .imageBuildFailed(message):
+        case .imageBuildFailed(let message):
             "Failed to build sandbox image: \(message)"
-        case let .proxyStartFailed(message):
+        case .proxyStartFailed(let message):
             "Failed to start network proxy: \(message)"
         case .proxyBridgeMissing:
             "proxy-bridge binary not found. Run 'make install' to build and install it."
-        case let .extraWorkspaceMismatch(name):
+        case .extraWorkspaceMismatch(let name):
             "Sandbox '\(name)' has different extra workspace mounts. Run 'sandbox rm \(name)' to recreate."
-        case let .workspaceMismatch(name, existing, requested):
+        case .workspaceMismatch(let name, let existing, let requested):
             "Sandbox '\(name)' is bound to workspace '\(existing)', not '\(requested)'. Run 'sandbox rm \(name)' to recreate."
-        case let .agentMismatch(name, existing, requested):
+        case .agentMismatch(let name, let existing, let requested):
             "Sandbox '\(name)' uses agent '\(existing)', not '\(requested)'. Run 'sandbox rm \(name)' to recreate."
-        case let .notManagedSandbox(name):
+        case .notManagedSandbox(let name):
             "'\(name)' is not a sandbox managed by this plugin."
-        case let .outdatedSandbox(name):
+        case .outdatedSandbox(let name):
             "Sandbox '\(name)' was created with an older version. Run 'sandbox rm \(name)' and recreate it."
-        case let .invalidName(name):
+        case .invalidName(let name):
             "Invalid sandbox name '\(name)'. Names must not be empty or contain '/' or '..'."
-        case let .nameTooLong(name, limit):
+        case .nameTooLong(let name, let limit):
             "Sandbox name '\(name)' is \(name.utf8.count) bytes; must be at most \(limit) (constrained by the in-guest socket relay path)."
-        case let .reservedName(name):
+        case .reservedName(let name):
             "'\(name)' is a built-in agent template name and cannot be used as a sandbox name."
         }
     }

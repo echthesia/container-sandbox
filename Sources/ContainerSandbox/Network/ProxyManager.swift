@@ -236,7 +236,7 @@ struct ProxyManager {
                 launcher.killProcess(pid: state.pid)
                 // Briefly wait for the old process to exit so it releases the
                 // socket before we unlink and rebind. 20 × 50ms = 1s budget.
-                for _ in 0 ..< 20 {
+                for _ in 0..<20 {
                     if !launcher.isProcessAlive(pid: state.pid) { break }
                     try? await Task.sleep(for: .milliseconds(50))
                 }
@@ -265,7 +265,7 @@ struct ProxyManager {
         try stateStorage.saveState(state, for: name)
 
         // Wait briefly for the socket to appear.
-        for _ in 0 ..< 20 {
+        for _ in 0..<20 {
             if stateStorage.socketExists(path: socket) { return socket }
             try await Task.sleep(for: .milliseconds(50))
         }
@@ -274,7 +274,8 @@ struct ProxyManager {
         launcher.killProcess(pid: pid)
         stateStorage.removeRuntimeState(for: name)
 
-        let logHint = stateStorage.socketExists(path: logPath.path)
+        let logHint =
+            stateStorage.socketExists(path: logPath.path)
             ? " (see \(logPath.path))" : ""
         throw SandboxError.proxyStartFailed("proxy socket not created after 1s\(logHint)")
     }

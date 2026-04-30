@@ -1,7 +1,8 @@
 import ContainerResource
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 struct RegistryTests {
     @Test func resolvesKnownAgents() {
@@ -106,7 +107,7 @@ struct ProcessConfigurationTests {
             workingDirectory: "/workspace"
         )
         // User should be inherited from baseConfig, not overridden
-        if case let .id(uid, gid) = config.user {
+        if case .id(let uid, let gid) = config.user {
             #expect(uid == 1000)
             #expect(gid == 1000)
         } else {
@@ -138,10 +139,10 @@ struct ProcessConfigurationTests {
         )
         // Should contain base env, template defaults, and extras
         let keys = Set(config.environment.compactMap { parseEnvEntry($0)?.key })
-        #expect(keys.contains("PATH")) // from base
-        #expect(keys.contains("TERM")) // injected for TTY
-        #expect(keys.contains("CUSTOM")) // from extras
-        #expect(keys.contains("HTTPS_PROXY")) // from proxy
+        #expect(keys.contains("PATH"))  // from base
+        #expect(keys.contains("TERM"))  // injected for TTY
+        #expect(keys.contains("CUSTOM"))  // from extras
+        #expect(keys.contains("HTTPS_PROXY"))  // from proxy
     }
 
     @Test func ttyTermOverridesBaseEnv() {

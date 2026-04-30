@@ -1,5 +1,6 @@
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 struct HostPortTests {
     // MARK: - Standard cases

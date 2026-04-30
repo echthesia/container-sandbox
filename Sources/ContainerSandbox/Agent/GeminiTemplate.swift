@@ -22,10 +22,11 @@ struct GeminiTemplate: AgentTemplate {
     let requiresVirtualization = false
     let useInit = true
 
-    let containerfileContent: String? = SandboxBaseImage.containerfileContent + ##"""
+    let containerfileContent: String? =
+        SandboxBaseImage.containerfileContent + ##"""
 
 
-    RUN npm install -g @google/gemini-cli \
-        && test -x /home/sandbox/.local/bin/gemini
-    """##
+            RUN npm install -g @google/gemini-cli \
+                && test -x /home/sandbox/.local/bin/gemini
+            """##
 }

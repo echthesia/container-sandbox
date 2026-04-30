@@ -1,6 +1,7 @@
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 struct NetworkPolicyTests {
     @Test func allowPolicyDefaults() {
@@ -82,10 +83,12 @@ struct NetworkPolicyTests {
 
     @Test func cidrLeadingZeroPrefixNormalized() throws {
         // "10.0.0.0/8" and "10.0.0.0/08" are semantically the same CIDR
-        let a = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))])
-        let b = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/08"))])
+        let a = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))])
+        let b = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/08"))])
         #expect(a == b)
     }
 
@@ -97,19 +100,23 @@ struct NetworkPolicyTests {
 
     @Test func cidrHostBitsMasked() throws {
         // 10.0.0.1/8 and 10.0.0.0/8 represent the same CIDR block
-        let a = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("10.0.0.1/8"))])
-        let b = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))])
+        let a = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("10.0.0.1/8"))])
+        let b = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("10.0.0.0/8"))])
         #expect(a == b)
     }
 
     @Test func cidrHostBitsMaskedIPv6() throws {
         // fc00::1/7 and fc00::/7 represent the same CIDR block
-        let a = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("fc00::1/7"))])
-        let b = try NetworkPolicy(direction: .deny, allowedHosts: [], blockedHosts: [],
-                                  blockedCIDRs: [#require(NormalizedCIDR("fc00::/7"))])
+        let a = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("fc00::1/7"))])
+        let b = try NetworkPolicy(
+            direction: .deny, allowedHosts: [], blockedHosts: [],
+            blockedCIDRs: [#require(NormalizedCIDR("fc00::/7"))])
         #expect(a == b)
     }
 

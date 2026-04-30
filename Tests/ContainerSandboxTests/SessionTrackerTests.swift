@@ -1,6 +1,7 @@
 import Foundation
-@testable import sandbox
 import Testing
+
+@testable import sandbox
 
 /// Tests for SessionTracker using fake storage and controllable PID liveness.
 struct FakeSessionTrackerTests {
@@ -33,7 +34,7 @@ struct FakeSessionTrackerTests {
 
         try storage.createSession(containerId: "c1", sessionId: "s1", pid: 42)
         try storage.createSession(containerId: "c1", sessionId: "s2", pid: 99)
-        try storage.createSession(containerId: "c1", sessionId: "s3", pid: 1) // dead
+        try storage.createSession(containerId: "c1", sessionId: "s3", pid: 1)  // dead
 
         // Remove s1, but s2 is still alive
         let wasLast = tracker.remove(sessionId: "s1", for: "c1")
@@ -127,7 +128,7 @@ struct FakeSessionTrackerTests {
     @Test func pidZeroWithDefaultPidIsAliveIsDead() throws {
         // Default pidIsAlive guards pid > 0, so PID 0 is correctly treated as dead
         let storage = FakeSessionStorage()
-        let tracker = SessionTracker(storage: storage) // uses default closure
+        let tracker = SessionTracker(storage: storage)  // uses default closure
 
         try storage.createSession(containerId: "c1", sessionId: "zombie", pid: 0)
         let wasLast = tracker.remove(sessionId: "other", for: "c1")
@@ -137,7 +138,7 @@ struct FakeSessionTrackerTests {
     @Test func negativePIDWithDefaultPidIsAliveIsDead() throws {
         // Default pidIsAlive guards pid > 0, so negative PIDs are correctly treated as dead
         let storage = FakeSessionStorage()
-        let tracker = SessionTracker(storage: storage) // uses default closure
+        let tracker = SessionTracker(storage: storage)  // uses default closure
 
         try storage.createSession(containerId: "c1", sessionId: "zombie", pid: -1)
         let wasLast = tracker.remove(sessionId: "other", for: "c1")
