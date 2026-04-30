@@ -141,6 +141,70 @@ jobs:
             --title "$VERSION" \
             --generate-notes
 
+      # Bump the Homebrew tap formula in echthesia/homebrew-container-sandbox.
+      # Skipped for pre-releases (any tag containing '-', e.g. v0.2.0-rc1) so
+      # `brew install container-sandbox` keeps pointing at the last stable.
+      # Requires TAP_REPO_TOKEN — a fine-grained PAT with contents:write on
+      # the tap repo. If the secret is unset, the step warns and exits 0 so
+      # the release still ships; the user can update the formula manually.
+      - name: Update Homebrew tap formula
+        if: ${{ !contains(env.VERSION, '-') }}
+        env:
+          GH_TOKEN: ${{ secrets.TAP_REPO_TOKEN }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "${GH_TOKEN:-}" ]; then
+            echo "::warning::TAP_REPO_TOKEN not set — skipping tap update. Update Formula/container-sandbox.rb manually."
+            exit 0
+          fi
+
+          HOST_ARCH=$(uname -m | sed 's/x86_64/amd64/')
+          PACKAGE_FILE="dist/container-sandbox-${VERSION}-${HOST_ARCH}.tar.gz"
+          if [ ! -f "${PACKAGE_FILE}.sha256" ]; then
+            echo "::error::Expected ${PACKAGE_FILE}.sha256 not found"
+            exit 1
+          fi
+          SHA256=$(awk '{print $1}' "${PACKAGE_FILE}.sha256")
+          URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/$(basename "$PACKAGE_FILE")"
+          VERSION_NUM="${VERSION#v}"
+
+          TAP_DIR="$(mktemp -d)"
+          git clone --depth 1 \
+            "https://x-access-token:${GH_TOKEN}@github.com/echthesia/homebrew-container-sandbox.git" \
+            "$TAP_DIR"
+          cd "$TAP_DIR"
+          git config user.email "actions@github.com"
+          git config user.name "container-sandbox release bot"
+
+          FORMULA="Formula/container-sandbox.rb"
+          # Sanity-check structure before sed so a refactor in the formula
+          # fails loud here, not silently leaves stale fields.
+          for field in url sha256 version; do
+            grep -q "^  ${field} " "$FORMULA" || {
+              echo "::error::No '${field}' line in $FORMULA — formula structure changed?"
+              exit 1
+            }
+          done
+
+          sed -i.bak \
+            -e "s|^  url \".*\"|  url \"$URL\"|" \
+            -e "s|^  sha256 \".*\"|  sha256 \"$SHA256\"|" \
+            -e "s|^  version \".*\"|  version \"$VERSION_NUM\"|" \
+            "$FORMULA"
+          rm -f "${FORMULA}.bak"
+
+          if git diff --quiet "$FORMULA"; then
+            echo "::warning::Formula unchanged after substitution — tap may already be at $VERSION."
+            exit 0
+          fi
+
+          git add "$FORMULA"
+          git commit -m "Bump container-sandbox to $VERSION"
+          git push origin HEAD:main
+
+          echo "Tap formula updated to $VERSION (sha256 $SHA256)"
+
       - name: Clean up secrets
         if: always()
         run: |
