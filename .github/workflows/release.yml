@@ -1,16 +1,14 @@
 name: Release
 
-# Currently dispatch-only. After secrets are configured and a manual run
-# succeeds, uncomment the `push.tags` trigger to release on `v*` tag pushes.
 on:
+  push:
+    tags: ["v*"]
   workflow_dispatch:
     inputs:
       version:
         description: "Version tag (e.g. v0.1.0). Must not already exist as a release."
         required: true
         type: string
-  # push:
-  #   tags: ["v*"]
 
 permissions:
   contents: write   # for `gh release create`
