@@ -34,10 +34,42 @@ jobs:
           go-version: "1.23"
 
       - name: Show toolchain
+        id: toolchain
         run: |
           swift --version
           xcodebuild -version
           go version
+          # Pin cache keys to the exact Xcode build so a runner-image bump
+          # busts the cache instead of feeding stale modules to a new compiler.
+          XCODE_BUILD=$(xcodebuild -version | awk 'NR==2 {print $NF}')
+          echo "xcode_build=$XCODE_BUILD" >> "$GITHUB_OUTPUT"
+
+      # SwiftPM artifact bundles (uv, gRPC plugins, etc.) — these survive
+      # Package.resolved changes, so cache them separately and aggressively.
+      - name: Cache SwiftPM artifacts
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/org.swift.swiftpm
+            ~/Library/org.swift.swiftpm
+          key: spm-artifacts-${{ runner.os }}-${{ steps.toolchain.outputs.xcode_build }}-${{ hashFiles('**/Package.resolved') }}
+          restore-keys: |
+            spm-artifacts-${{ runner.os }}-${{ steps.toolchain.outputs.xcode_build }}-
+
+      # Compiled .build/ directory: deps + project. Keyed strictly on
+      # Package.resolved so a dep bump rebuilds; same Xcode build required
+      # so module formats line up.
+      - name: Cache .build
+        uses: actions/cache@v4
+        with:
+          path: .build
+          key: spm-build-${{ runner.os }}-${{ steps.toolchain.outputs.xcode_build }}-${{ hashFiles('**/Package.resolved') }}-${{ hashFiles('Package.swift') }}
+          restore-keys: |
+            spm-build-${{ runner.os }}-${{ steps.toolchain.outputs.xcode_build }}-${{ hashFiles('**/Package.resolved') }}-
+            spm-build-${{ runner.os }}-${{ steps.toolchain.outputs.xcode_build }}-
+
+      - name: Run tests
+        run: swift test
 
       - name: Import Developer ID certificate into temp keychain
         env:
