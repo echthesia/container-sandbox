@@ -26,10 +26,10 @@ struct ClaudeTemplateTests {
     let template = ClaudeTemplate()
 
     @Test func hasContainerfile() throws {
-        #expect(template.containerfileContent != nil)
-        #expect(try #require(template.containerfileContent?.contains("ubuntu:26.04")))
-        #expect(try #require(template.containerfileContent?.contains("claude.ai/install.sh")))
-        #expect(try #require(template.containerfileContent?.contains("sandbox")))
+        let content = try #require(template.containerfileContent)
+        #expect(content.contains("ubuntu:26.04"))
+        #expect(content.contains("claude.ai/install.sh"))
+        #expect(content.contains("sandbox"))
     }
 
     @Test func passesThroughAPIKeys() {

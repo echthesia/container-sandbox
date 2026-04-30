@@ -45,7 +45,7 @@ final class FakeContainerOperations: ContainerOperations, @unchecked Sendable {
 
     func stop(id: String) async throws {
         stoppedIds.append(id)
-        if var snapshot = snapshots[id] {
+        if let snapshot = snapshots[id] {
             snapshots[id] = makeSnapshot(config: snapshot.configuration, status: .stopped)
         }
     }

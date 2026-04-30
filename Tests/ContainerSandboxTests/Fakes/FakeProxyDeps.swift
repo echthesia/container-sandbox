@@ -67,6 +67,7 @@ final class FakeProxyStateStorage: ProxyStateStorage, @unchecked Sendable {
         writtenPolicies.removeValue(forKey: name)
     }
 
+    @discardableResult
     func writePolicy(_ policy: NetworkPolicy, for name: String) throws -> String {
         writtenPolicies[name] = policy
         return "/fake/config/\(name).json"

@@ -17,6 +17,7 @@ protocol ProxyStateStorage: Sendable {
     func removeRuntimeState(for name: String)
     /// Remove all state including the persistent policy config.
     func removeAll(for name: String)
+    @discardableResult
     func writePolicy(_ policy: NetworkPolicy, for name: String) throws -> String
     func loadPolicy(for name: String) throws -> NetworkPolicy?
     func socketExists(path: String) -> Bool
@@ -109,6 +110,7 @@ struct FileProxyStateStorage: ProxyStateStorage {
         try? FileManager.default.removeItem(at: sandboxDir(for: name))
     }
 
+    @discardableResult
     func writePolicy(_ policy: NetworkPolicy, for name: String) throws -> String {
         let configPath = sandboxDir(for: name).appendingPathComponent("policy.json")
         let data = try JSONEncoder().encode(policy)

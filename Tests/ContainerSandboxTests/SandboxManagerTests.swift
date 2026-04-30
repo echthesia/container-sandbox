@@ -173,7 +173,7 @@ struct SandboxManagerLifecycleTests {
     }
 
     @Test func creationFailsIfProxyBridgeMissing() {
-        let h = makeManager()
+        _ = makeManager()
 
         // Point libexecHostPath at a nonexistent directory so the preflight check fails.
         // Since libexecHostPath is a static let, we test the error case indirectly:
