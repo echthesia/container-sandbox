@@ -783,3 +783,36 @@ struct SandboxManagerUtilTests {
         #expect(readOnly)
     }
 }
+
+// MARK: - extraWorkspacesLabel roundtrip
+
+struct ExtraWorkspaceRoundTripTests {
+    init() {
+        try? FileManager.default.createDirectory(
+            atPath: testWorkspace,
+            withIntermediateDirectories: true
+        )
+    }
+
+    @Test func duplicateExtrasProduceSameLabelAsDeduplicated() {
+        // The label builder should produce identical output regardless of
+        // whether duplicates are present, since mount creation deduplicates.
+        let withDupes = SandboxManager.extraWorkspacesLabel([testWorkspace, testWorkspace])
+        let withoutDupes = SandboxManager.extraWorkspacesLabel([testWorkspace])
+
+        #expect(
+            withDupes == withoutDupes,
+            "Duplicate extras should be collapsed to match mount deduplication")
+    }
+
+    @Test func extraWorkspaceLabelIsPathNormalized() {
+        // /path and /path/../path resolve to the same location.
+        // The label should be identical for both.
+        let direct = SandboxManager.extraWorkspacesLabel([testWorkspace])
+        let indirect = SandboxManager.extraWorkspacesLabel([testWorkspace + "/../" + URL(fileURLWithPath: testWorkspace).lastPathComponent])
+
+        #expect(
+            direct == indirect,
+            "Path-equivalent extras should produce the same label")
+    }
+}
