@@ -767,3 +767,19 @@ struct SandboxManagerInputValidationBugs {
             "Empty string extra workspace should not silently mount '\(resolvedCwd)'")
     }
 }
+
+// MARK: - parseWorkspacePath
+
+struct SandboxManagerUtilTests {
+    @Test func parseWorkspacePathPlain() {
+        let (path, readOnly) = SandboxManager.parseWorkspacePath("/some/path")
+        #expect(path == "/some/path")
+        #expect(!readOnly)
+    }
+
+    @Test func parseWorkspacePathReadOnly() {
+        let (path, readOnly) = SandboxManager.parseWorkspacePath("/some/path:ro")
+        #expect(path == "/some/path")
+        #expect(readOnly)
+    }
+}
