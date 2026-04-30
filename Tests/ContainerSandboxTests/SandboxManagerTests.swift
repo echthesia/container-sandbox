@@ -166,16 +166,17 @@ struct SandboxManagerLifecycleTests {
 
     @Test func creationBuildsImageIfMissing() async throws {
         let h = makeManager()
+        let claudeImage = ClaudeTemplate().defaultImage
 
         // Remove the agent image so it needs building
-        h.images.existingImages.remove("container-sandbox-claude:latest")
+        h.images.existingImages.remove(claudeImage)
 
         _ = try await h.manager.ensureSandboxExists(
             template: ClaudeTemplate(),
             workspace: testWorkspace
         )
 
-        #expect(h.images.builtImages.contains("container-sandbox-claude:latest"))
+        #expect(h.images.builtImages.contains(claudeImage))
     }
 
     @Test func creationFailsIfProxyBridgeMissing() {
@@ -658,8 +659,11 @@ private let edgeCaseExtra = FileManager.default.temporaryDirectory
 private func makeEdgeCaseManager() -> (SandboxManager, FakeContainerOperations) {
     let containers = FakeContainerOperations()
     let images = FakeImageOperations()
+    // Pre-stamp both template images as already built so the test focuses
+    // on post-build behavior rather than triggering a fake build run.
     images.existingImages = [
-        "container-sandbox-claude:latest", "docker.io/ubuntu:26.04",
+        ClaudeTemplate().defaultImage,
+        ShellTemplate().defaultImage,
     ]
     let manager = SandboxManager(
         containers: containers,

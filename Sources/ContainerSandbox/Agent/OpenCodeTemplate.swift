@@ -1,6 +1,5 @@
 struct OpenCodeTemplate: AgentTemplate {
     let name = "opencode"
-    let defaultImage = "container-sandbox-opencode:latest"
 
     let entrypoint = ["/home/sandbox/.opencode/bin/opencode"]
 

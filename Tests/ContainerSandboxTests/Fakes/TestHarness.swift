@@ -29,7 +29,10 @@ struct TestHarness {
         proxyLauncher: FakeProxyLauncher = FakeProxyLauncher(),
         proxyStorage: FakeProxyStateStorage = FakeProxyStateStorage()
     ) {
-        images.existingImages = ["container-sandbox-claude:latest", "docker.io/ubuntu:26.04"]
+        // Pre-stamp the built-in template images so tests skip the build path
+        // unless they explicitly remove an entry to exercise it.
+        images.existingImages = Set(
+            AgentRegistry.availableAgents.compactMap { AgentRegistry.resolve($0)?.defaultImage })
 
         let sessionTracker = SessionTracker(storage: sessions, pidIsAlive: { _ in false })
         let proxyManager = ProxyManager(launcher: proxyLauncher, stateStorage: proxyStorage)

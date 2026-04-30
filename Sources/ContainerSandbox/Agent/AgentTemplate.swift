@@ -25,6 +25,19 @@ extension AgentTemplate {
     var defaultNetworkPolicy: NetworkPolicy {
         .allow
     }
+
+    /// Default tag derives from `name` plus an 8-hex SHA256 prefix of the
+    /// containerfile content, so any edit to the Containerfile invalidates
+    /// the cached image automatically: `container-sandbox-claude:sha-abc12345`.
+    /// Templates that point at an external image (no `containerfileContent`)
+    /// must override this with a stable reference.
+    var defaultImage: String {
+        guard let content = containerfileContent else {
+            preconditionFailure(
+                "AgentTemplate '\(name)' has no containerfileContent — must override defaultImage with an external reference")
+        }
+        return "container-sandbox-\(name):sha-\(SandboxNaming.shortHash(content))"
+    }
 }
 
 extension AgentTemplate {

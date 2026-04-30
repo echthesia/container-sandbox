@@ -1,6 +1,5 @@
 struct ShellTemplate: AgentTemplate {
     let name = "shell"
-    let defaultImage = "container-sandbox-shell:latest"
 
     let entrypoint = ["/bin/bash"]
 

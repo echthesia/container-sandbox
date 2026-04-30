@@ -1,6 +1,5 @@
 struct CodexTemplate: AgentTemplate {
     let name = "codex"
-    let defaultImage = "container-sandbox-codex:latest"
 
     /// The bypass flag is meant for use inside an externally hardened
     /// sandbox (per OpenAI docs) — that's exactly what we are.

@@ -1,6 +1,5 @@
 struct GeminiTemplate: AgentTemplate {
     let name = "gemini"
-    let defaultImage = "container-sandbox-gemini:latest"
 
     let entrypoint = ["/home/sandbox/.local/bin/gemini", "--yolo"]
 

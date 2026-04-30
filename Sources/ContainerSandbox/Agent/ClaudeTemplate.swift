@@ -1,6 +1,5 @@
 struct ClaudeTemplate: AgentTemplate {
     let name = "claude"
-    let defaultImage = "container-sandbox-claude:latest"
 
     let entrypoint = ["/home/sandbox/.local/bin/claude", "--dangerously-skip-permissions"]
 

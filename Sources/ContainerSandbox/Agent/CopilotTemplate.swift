@@ -1,6 +1,5 @@
 struct CopilotTemplate: AgentTemplate {
     let name = "copilot"
-    let defaultImage = "container-sandbox-copilot:latest"
 
     /// --yolo == --allow-all-tools + --allow-all-paths + --allow-all-urls.
     /// --allow-all-tools alone still prompts on path writes and URL fetches.
