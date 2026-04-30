@@ -88,6 +88,10 @@ extension AgentTemplate {
 enum AgentRegistry {
     private static let agents: [String: any AgentTemplate] = [
         "claude": ClaudeTemplate(),
+        "codex": CodexTemplate(),
+        "copilot": CopilotTemplate(),
+        "gemini": GeminiTemplate(),
+        "opencode": OpenCodeTemplate(),
         "shell": ShellTemplate(),
     ]
 

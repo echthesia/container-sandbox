@@ -567,7 +567,7 @@ struct SandboxManagerLifecycleTests {
         )
 
         let config = h.containers.createdConfigs[0]
-        #expect(config.ssh == false, "ShellTemplate does not require SSH")
+        #expect(config.ssh == true, "ShellTemplate now shares the agent base and enables SSH")
         #expect(config.useInit == true, "ShellTemplate uses init")
     }
 

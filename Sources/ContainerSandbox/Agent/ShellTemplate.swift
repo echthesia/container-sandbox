@@ -1,14 +1,19 @@
 struct ShellTemplate: AgentTemplate {
     let name = "shell"
-    let defaultImage = "docker.io/ubuntu:26.04"
+    let defaultImage = "container-sandbox-shell:latest"
 
     let entrypoint = ["/bin/bash"]
 
-    let defaultEnvironment: [String: String] = [:]
+    let defaultEnvironment: [String: String] = [
+        "LANG": "en_US.UTF-8",
+        "LC_ALL": "en_US.UTF-8",
+    ]
 
     let passthroughEnvironment: [String] = []
 
-    let requiresSSH = false
+    let requiresSSH = true
     let requiresVirtualization = false
     let useInit = true
+
+    let containerfileContent: String? = SandboxBaseImage.containerfileContent
 }
