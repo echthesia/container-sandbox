@@ -25,7 +25,7 @@ PACKAGE_TGZ = $(DIST_DIR)/$(PACKAGE_NAME).tar.gz
 SIGN_IDENTITY ?= -
 NOTARY_PROFILE ?=
 
-.PHONY: build install link uninstall clean init-binaries verify lint format test package stamp-version unstamp-version
+.PHONY: build install link uninstall clean init-binaries verify lint format test smoke package stamp-version unstamp-version
 
 build:
 	swift build $(SWIFT_BUILD_FLAGS)
@@ -118,6 +118,9 @@ format:  ## Apply formatting in-place
 
 test:  ## Run hermetic test suite
 	swift test
+
+smoke: install  ## Build each agent image to validate Containerfiles + install paths
+	bash scripts/smoke-test.sh
 
 clean:
 	swift package clean

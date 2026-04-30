@@ -56,7 +56,7 @@ struct RunCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Set environment variables (KEY=VALUE)")
     var env: [String] = []
 
-    @Argument(help: "Agent name (e.g., claude, shell) or existing sandbox name")
+    @Argument(help: "Agent name (\(AgentRegistry.availableAgents.joined(separator: ", "))) or existing sandbox name")
     var agent: String
 
     @Argument(help: "Workspace directory (default: current directory)")
@@ -180,7 +180,7 @@ struct CreateCommand: AsyncParsableCommand {
     @Option(name: [.short, .long], help: "Override sandbox name")
     var name: String?
 
-    @Argument(help: "Agent name (e.g., claude, shell)")
+    @Argument(help: "Agent name (\(AgentRegistry.availableAgents.joined(separator: ", ")))")
     var agent: String
 
     @Argument(help: "Workspace directory")
