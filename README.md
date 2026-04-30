@@ -6,7 +6,7 @@ A Swift CLI plugin for [Apple's Container framework](https://github.com/apple/co
 container sandbox run claude
 ```
 
-Each sandbox is a Linux VM with the agent installed, a per-sandbox HTTP/SOCKS5 proxy enforcing a configurable network policy, and the host workspace mounted in via virtiofs. Nested Docker is supported inside the Claude template.
+Each sandbox is a Linux VM with the agent installed, a per-sandbox HTTP/SOCKS5 proxy enforcing a configurable network policy, and the host workspace mounted in via virtiofs. All agent templates share a common base image with Node.js, Docker Engine (for nested containers), `uv`, `gh`, and an unprivileged `sandbox` user with passwordless sudo.
 
 > **Not affiliated with Apple.** This is a community plugin built on top of Apple's open-source [`container`](https://github.com/apple/container) framework.
 
@@ -52,16 +52,24 @@ Sandbox names are deterministic — the agent name plus a SHA-256 prefix of the 
 
 ### Built-in agent templates
 
-- **claude** — Ubuntu 26.04, [Claude Code](https://claude.com/claude-code) installed under `/home/sandbox/.local`, [`uv`](https://github.com/astral-sh/uv) vendored in, Docker Engine for nested containers, sudo access for the `sandbox` user.
-- **shell** — minimal interactive shell sandbox.
+All templates build on a shared Ubuntu 26.04 base (Node.js 22, Docker Engine, [`uv`](https://github.com/astral-sh/uv), `gh`, `git`, sudo-enabled `sandbox` user) and run with the agent's own "yolo"-equivalent flag — every template trusts the VM boundary instead of in-prompt approval.
 
-To add another agent, conform to `AgentTemplate` in `Sources/ContainerSandbox/Agent/` and register it.
+| Agent | Install | Yolo flag | Auth env |
+|---|---|---|---|
+| **claude** | [Claude Code](https://claude.com/claude-code) install script | `--dangerously-skip-permissions` | `ANTHROPIC_API_KEY`, `ANTHROPIC_AUTH_TOKEN`, `CLAUDE_CODE_OAUTH_TOKEN`, AWS/Bedrock/Vertex |
+| **codex** | `npm i -g @openai/codex` | `--dangerously-bypass-approvals-and-sandbox` | `OPENAI_API_KEY` |
+| **gemini** | `npm i -g @google/gemini-cli` | `--yolo` | `GEMINI_API_KEY`, `GOOGLE_API_KEY`, `GOOGLE_CLOUD_PROJECT` |
+| **copilot** | `npm i -g @github/copilot` | `--yolo` | `GITHUB_TOKEN` / `GH_TOKEN` / `COPILOT_GITHUB_TOKEN` |
+| **opencode** | [opencode.ai](https://opencode.ai) install script + permissive config | (config-based: `permission: { "*": "allow" }`) | provider keys (`ANTHROPIC_API_KEY`, `OPENAI_API_KEY`, `GEMINI_API_KEY`, `GROQ_API_KEY`, `OPENROUTER_API_KEY`) |
+| **shell** | none — bash on the shared base | n/a | none |
+
+To add another agent, conform to `AgentTemplate` in `Sources/ContainerSandbox/Agent/` and register it in `AgentRegistry`.
 
 ## Networking
 
 Each sandbox gets its own `ProxyServer` (Swift NIO, SOCKS5 + HTTP CONNECT) running on the host, listening on a per-sandbox Unix socket shared into the VM via virtiofs. Inside the container, `proxy-bridge` (Go) listens on `127.0.0.1:3128` and forwards to that socket; the agent's traffic is filtered against the policy before leaving the host.
 
-Policies are domain-allowlist or blocklist, with default-blocked CIDRs that cover RFC1918, link-local, and IPv6 ULA/link-local ranges. The `claude` template defaults to allow-all; the `shell` template defaults to deny-all. Inspect or change at runtime with `container sandbox network proxy`.
+Policies are domain-allowlist or blocklist, with default-blocked CIDRs that cover RFC1918, link-local, and IPv6 ULA/link-local ranges. All built-in templates currently default to allow-all; tighten per sandbox at runtime with `container sandbox network proxy`.
 
 Nested Docker pulls also flow through the proxy: `dockerd` is configured to use `http://127.0.0.1:3128`, and nested containers reach `proxy-bridge` via the docker bridge gateway (`172.17.0.1:3128`).
 
