@@ -27,6 +27,10 @@ protocol ImageOperations: Sendable {
     func getImageConfig(reference: String, platform: ContainerizationOCI.Platform) async throws -> ContainerizationOCI.ImageConfig?
     /// Build an image from a Containerfile string.
     func buildImage(tag: String, containerfileContent: String) async throws
+    /// List all image references in the local store.
+    func listImages() async throws -> [String]
+    /// Remove an image from the local store.
+    func removeImage(reference: String) async throws
 }
 
 /// Kernel provider (wraps ClientKernel).
@@ -134,6 +138,14 @@ struct LiveImageOperations: ImageOperations {
         guard status == 0 else {
             throw SandboxError.imageBuildFailed("container build exited with status \(status)")
         }
+    }
+
+    func listImages() async throws -> [String] {
+        try await ClientImage.list().map(\.reference)
+    }
+
+    func removeImage(reference: String) async throws {
+        try await ClientImage.delete(reference: reference)
     }
 }
 

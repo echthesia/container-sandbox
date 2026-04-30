@@ -67,6 +67,32 @@ struct SandboxManager {
             return
         }
         try await images.buildImage(tag: template.defaultImage, containerfileContent: containerfileContent)
+        await pruneStaleImages(for: template)
+    }
+
+    /// After a fresh build, remove any older content-addressed images for the
+    /// same template. Existing sandbox containers don't depend on the host
+    /// image record once they've been created (snapshot is theirs), so this
+    /// is safe even if older versions are still in use by stopped sandboxes.
+    /// Best-effort: a removal failure (image still pinned, transient API
+    /// error) is logged and swallowed rather than failing sandbox creation.
+    private func pruneStaleImages(for template: any AgentTemplate) async {
+        let prefix = "container-sandbox-\(template.name):sha-"
+        let current = template.defaultImage
+        let allImages: [String]
+        do {
+            allImages = try await images.listImages()
+        } catch {
+            log.warning("Failed to list images for stale-image GC: \(error)")
+            return
+        }
+        for ref in allImages where ref.hasPrefix(prefix) && ref != current {
+            do {
+                try await images.removeImage(reference: ref)
+            } catch {
+                log.info("Skipped stale image \(ref) (still in use or unavailable): \(error)")
+            }
+        }
     }
 
     // MARK: - Creation

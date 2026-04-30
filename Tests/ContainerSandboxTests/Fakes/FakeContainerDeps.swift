@@ -85,6 +85,17 @@ final class FakeImageOperations: ImageOperations, @unchecked Sendable {
         builtImages.append(tag)
         existingImages.insert(tag)
     }
+
+    var removedImages: [String] = []
+
+    func listImages() async throws -> [String] {
+        Array(existingImages)
+    }
+
+    func removeImage(reference: String) async throws {
+        removedImages.append(reference)
+        existingImages.remove(reference)
+    }
 }
 
 // MARK: - Fake KernelProvider

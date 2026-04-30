@@ -179,6 +179,52 @@ struct SandboxManagerLifecycleTests {
         #expect(h.images.builtImages.contains(claudeImage))
     }
 
+    @Test func freshBuildPrunesOlderImagesOfSameTemplate() async throws {
+        let h = makeManager()
+        let currentImage = ClaudeTemplate().defaultImage
+        let staleClaude = "container-sandbox-claude:sha-deadbeef"
+        let staleClaude2 = "container-sandbox-claude:sha-cafef00d"
+        let unrelatedImage = "container-sandbox-shell:sha-deadbeef"
+
+        // Remove current so we trigger a build, then preload two stale Claude
+        // images and one unrelated image (which must survive).
+        h.images.existingImages.remove(currentImage)
+        h.images.existingImages.insert(staleClaude)
+        h.images.existingImages.insert(staleClaude2)
+        h.images.existingImages.insert(unrelatedImage)
+
+        _ = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        #expect(h.images.removedImages.contains(staleClaude), "Old Claude image should be pruned")
+        #expect(h.images.removedImages.contains(staleClaude2), "Second old Claude image should be pruned")
+        #expect(!h.images.removedImages.contains(unrelatedImage), "Other-template images must not be touched")
+        #expect(!h.images.removedImages.contains(currentImage), "Just-built image must not be pruned")
+    }
+
+    @Test func cachedImageHitDoesNotPrune() async throws {
+        let h = makeManager()
+        let currentImage = ClaudeTemplate().defaultImage
+        let staleClaude = "container-sandbox-claude:sha-deadbeef"
+
+        // Current image already present → no build → no prune.
+        h.images.existingImages.insert(staleClaude)
+
+        _ = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        #expect(h.images.builtImages.isEmpty, "No build should have occurred")
+        #expect(
+            h.images.removedImages.isEmpty,
+            "Pruning runs only after a successful build, not on cache hit. Stale: \(h.images.removedImages)")
+        #expect(h.images.existingImages.contains(staleClaude), "Stale image should remain on cache hit")
+        #expect(h.images.existingImages.contains(currentImage))
+    }
+
     @Test func creationFailsIfProxyBridgeMissing() {
         _ = makeManager()
 
