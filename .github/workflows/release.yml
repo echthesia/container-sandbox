@@ -144,18 +144,18 @@ jobs:
       # Bump the Homebrew tap formula in echthesia/homebrew-container-sandbox.
       # Skipped for pre-releases (any tag containing '-', e.g. v0.2.0-rc1) so
       # `brew install container-sandbox` keeps pointing at the last stable.
-      # Requires TAP_REPO_TOKEN — a fine-grained PAT with contents:write on
-      # the tap repo. If the secret is unset, the step warns and exits 0 so
-      # the release still ships; the user can update the formula manually.
+      # Auth: a deploy key on the tap repo (private half stored as the
+      # TAP_DEPLOY_KEY secret) — scoped to one repo, write-only on contents,
+      # no rotation pressure from PAT expiry.
       - name: Update Homebrew tap formula
         if: ${{ !contains(env.VERSION, '-') }}
         env:
-          GH_TOKEN: ${{ secrets.TAP_REPO_TOKEN }}
+          TAP_DEPLOY_KEY: ${{ secrets.TAP_DEPLOY_KEY }}
         run: |
           set -euo pipefail
 
-          if [ -z "${GH_TOKEN:-}" ]; then
-            echo "::warning::TAP_REPO_TOKEN not set — skipping tap update. Update Formula/container-sandbox.rb manually."
+          if [ -z "${TAP_DEPLOY_KEY:-}" ]; then
+            echo "::warning::TAP_DEPLOY_KEY not set — skipping tap update. Update Formula/container-sandbox.rb manually."
             exit 0
           fi
 
@@ -169,9 +169,19 @@ jobs:
           URL="https://github.com/${{ github.repository }}/releases/download/${VERSION}/$(basename "$PACKAGE_FILE")"
           VERSION_NUM="${VERSION#v}"
 
+          # Set up SSH for the tap clone. Using a distinct file under
+          # $RUNNER_TEMP so the cleanup step can wipe it on always(),
+          # mirroring how the keychain/notary creds are handled above.
+          KEY_PATH="$RUNNER_TEMP/tap_deploy"
+          install -m 600 /dev/null "$KEY_PATH"
+          printf '%s\n' "$TAP_DEPLOY_KEY" > "$KEY_PATH"
+          mkdir -p ~/.ssh
+          ssh-keyscan github.com >> ~/.ssh/known_hosts 2>/dev/null
+          export GIT_SSH_COMMAND="ssh -i $KEY_PATH -o IdentitiesOnly=yes"
+
           TAP_DIR="$(mktemp -d)"
           git clone --depth 1 \
-            "https://x-access-token:${GH_TOKEN}@github.com/echthesia/homebrew-container-sandbox.git" \
+            git@github.com:echthesia/homebrew-container-sandbox.git \
             "$TAP_DIR"
           cd "$TAP_DIR"
           git config user.email "actions@github.com"
@@ -209,4 +219,4 @@ jobs:
         if: always()
         run: |
           security delete-keychain "$RUNNER_TEMP/build.keychain-db" || true
-          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/cert.p12"
+          rm -f "$RUNNER_TEMP/AuthKey.p8" "$RUNNER_TEMP/cert.p12" "$RUNNER_TEMP/tap_deploy"
