@@ -95,8 +95,8 @@ uninstall:
 
 verify: lint test  ## Run full verification suite
 
-lint:  ## Strict lint pass — uses the more permissive .swift-format-nolint subset
-	swift format lint --recursive --strict --configuration .swift-format-nolint Sources Tests
+lint:  ## Strict lint pass against the full .swift-format ruleset
+	swift format lint --recursive --strict --configuration .swift-format Sources Tests
 
 format:  ## Apply formatting in-place
 	swift format --recursive --in-place --configuration .swift-format Sources Tests

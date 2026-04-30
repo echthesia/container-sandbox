@@ -354,21 +354,31 @@ final class ProxyServer: Sendable {
         let host: String
         let addrLen: Int
 
-        // Force unwraps below: preceding accumulate() calls guarantee bytes exist.
-        // swiftlint:disable force_unwrapping
+        // Each branch's preceding accumulate() guarantees the bytes are present;
+        // the guards convert the impossible-by-invariant nil into a SOCKS5 error
+        // reply rather than a crash.
         switch atyp {
         case 0x01:  // IPv4: 4 bytes
             try await accumulate(buffer: &buffer, iterator: &iterator, minimum: 4 + 4 + 2)
-            let b0 = buffer.getInteger(at: reqBase + 4, as: UInt8.self)!
-            let b1 = buffer.getInteger(at: reqBase + 5, as: UInt8.self)!
-            let b2 = buffer.getInteger(at: reqBase + 6, as: UInt8.self)!
-            let b3 = buffer.getInteger(at: reqBase + 7, as: UInt8.self)!
+            guard
+                let b0 = buffer.getInteger(at: reqBase + 4, as: UInt8.self),
+                let b1 = buffer.getInteger(at: reqBase + 5, as: UInt8.self),
+                let b2 = buffer.getInteger(at: reqBase + 6, as: UInt8.self),
+                let b3 = buffer.getInteger(at: reqBase + 7, as: UInt8.self)
+            else {
+                try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
+                return
+            }
             host = "\(b0).\(b1).\(b2).\(b3)"
             addrLen = 4
 
         case 0x03:  // Domain name: 1 byte length + name
             try await accumulate(buffer: &buffer, iterator: &iterator, minimum: 5)
-            let nameLen = Int(buffer.getInteger(at: reqBase + 4, as: UInt8.self)!)
+            guard let rawNameLen = buffer.getInteger(at: reqBase + 4, as: UInt8.self) else {
+                try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
+                return
+            }
+            let nameLen = Int(rawNameLen)
             guard nameLen > 0 else {
                 try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
                 return
@@ -398,7 +408,6 @@ final class ProxyServer: Sendable {
             try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .addressTypeNotSupported)
             return
         }
-        // swiftlint:enable force_unwrapping
 
         // Port (2 bytes, big-endian).
         let portOffset = reqBase + 4 + addrLen
@@ -602,9 +611,12 @@ private func parseHTTPRequest(
     // Accumulate until we find \r\n\r\n marking end of headers.
     while true {
         if let separatorRange = findHeaderEnd(in: buffer) {
-            // findHeaderEnd returns a length within buffer.readableBytes.
-            // swiftlint:disable:next force_unwrapping
-            let headerBytes = buffer.readSlice(length: separatorRange)!
+            // findHeaderEnd returns a length within buffer.readableBytes, so
+            // readSlice should always succeed; treat the impossible case as
+            // a malformed request rather than crashing.
+            guard let headerBytes = buffer.readSlice(length: separatorRange) else {
+                throw ProxyError.malformedRequest
+            }
             // Skip past the \r\n\r\n separator.
             buffer.moveReaderIndex(forwardBy: 4)
             // buffer now contains only overflow (body bytes).
