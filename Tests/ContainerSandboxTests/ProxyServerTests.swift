@@ -362,8 +362,8 @@ import Testing
             var data: [UInt8] = [0x05, 0x01, 0x00]  // valid greeting
             data += [0x04, 0x01, 0x00, 0x01, 127, 0, 0, 1, 0x00, 0x50]  // bad version in request
             data.withUnsafeBufferPointer { ptr in
-                // swiftlint:disable:next force_unwrapping
-                _ = Darwin.write(fd, ptr.baseAddress!, data.count)
+                guard let base = ptr.baseAddress else { return }
+                _ = Darwin.write(fd, base, data.count)
             }
             return try readAllBytes(fd)
         }.value
@@ -509,8 +509,8 @@ import Testing
             data += [UInt8((port >> 8) & 0xFF), UInt8(port & 0xFF)]
 
             data.withUnsafeBufferPointer { ptr in
-                // swiftlint:disable:next force_unwrapping
-                _ = Darwin.write(fd, ptr.baseAddress!, data.count)
+                guard let base = ptr.baseAddress else { return }
+                _ = Darwin.write(fd, base, data.count)
             }
             return try readAllBytes(fd)
         }.value
@@ -542,8 +542,8 @@ import Testing
             // Send greeting
             let greeting: [UInt8] = [0x05, 0x01, 0x00]
             greeting.withUnsafeBufferPointer { ptr in
-                // swiftlint:disable:next force_unwrapping
-                _ = Darwin.write(fd, ptr.baseAddress!, greeting.count)
+                guard let base = ptr.baseAddress else { return }
+                _ = Darwin.write(fd, base, greeting.count)
             }
 
             // Read greeting reply (2 bytes: [0x05, 0x00])
@@ -568,8 +568,8 @@ import Testing
             request += [UInt8((port >> 8) & 0xFF), UInt8(port & 0xFF)]
 
             request.withUnsafeBufferPointer { ptr in
-                // swiftlint:disable:next force_unwrapping
-                _ = Darwin.write(fd, ptr.baseAddress!, request.count)
+                guard let base = ptr.baseAddress else { return }
+                _ = Darwin.write(fd, base, request.count)
             }
 
             // Read connect reply (10 bytes for IPv4 response)

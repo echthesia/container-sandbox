@@ -24,20 +24,26 @@ struct NetworkPolicy: Codable {
 
     /// Default blocked CIDRs — host-side private networks and localhost.
     /// Container-internal localhost (127.0.0.1 inside the VM) is unaffected.
-    /// Force-unwrapped because these literals are compile-time constants; a bad
-    /// entry is a programmer error that should fail loudly at startup.
-    // swiftlint:disable force_unwrapping
     static let defaultBlockedCIDRs: [NormalizedCIDR] = [
-        NormalizedCIDR("10.0.0.0/8")!,
-        NormalizedCIDR("172.16.0.0/12")!,
-        NormalizedCIDR("192.168.0.0/16")!,
-        NormalizedCIDR("127.0.0.0/8")!,
-        NormalizedCIDR("169.254.0.0/16")!,
-        NormalizedCIDR("::1/128")!,
-        NormalizedCIDR("fc00::/7")!,
-        NormalizedCIDR("fe80::/10")!,
-    ]
-    // swiftlint:enable force_unwrapping
+        "10.0.0.0/8",
+        "172.16.0.0/12",
+        "192.168.0.0/16",
+        "127.0.0.0/8",
+        "169.254.0.0/16",
+        "::1/128",
+        "fc00::/7",
+        "fe80::/10",
+    ].map(literalCIDR)
+
+    /// Helper for module-internal hardcoded CIDR literals. A nil result here
+    /// would be a typo in our own code, so it crashes with a diagnostic that
+    /// names the offending literal instead of silently dropping the rule.
+    private static func literalCIDR(_ s: String) -> NormalizedCIDR {
+        guard let cidr = NormalizedCIDR(s) else {
+            preconditionFailure("invalid hardcoded CIDR literal: '\(s)'")
+        }
+        return cidr
+    }
 
     /// Allow all traffic (blocklist mode). Blocks private CIDRs.
     static let allow = NetworkPolicy(
