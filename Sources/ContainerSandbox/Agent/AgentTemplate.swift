@@ -50,6 +50,10 @@ extension AgentTemplate {
         // Inject TERM for TTY sessions, matching Docker's behavior.
         // Positioned before template defaults so templates can override.
         envMap.append(("TERM", "xterm-256color"))
+        // Forward COLORTERM if the host advertises 24-bit color support.
+        if let colorterm = ProcessInfo.processInfo.environment["COLORTERM"] {
+            envMap.append(("COLORTERM", colorterm))
+        }
         for (key, value) in defaultEnvironment {
             envMap.append((key, value))
         }

@@ -7,7 +7,6 @@ struct OpenCodeTemplate: AgentTemplate {
     let defaultEnvironment: [String: String] = [
         "LANG": "en_US.UTF-8",
         "LC_ALL": "en_US.UTF-8",
-        "PATH": "/home/sandbox/.opencode/bin:/home/sandbox/.local/bin:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin",
     ]
 
     /// OpenCode is provider-agnostic; pass through the common provider keys.
@@ -31,7 +30,8 @@ struct OpenCodeTemplate: AgentTemplate {
     let containerfileContent: String? = SandboxBaseImage.containerfileContent + ##"""
 
 
-    RUN curl -fsSL https://opencode.ai/install | bash
+    RUN curl -fsSL https://opencode.ai/install | bash -s -- --no-modify-path \
+        && test -x /home/sandbox/.opencode/bin/opencode
 
     RUN mkdir -p /home/sandbox/.config/opencode && printf '%s\n' \
         '{' \

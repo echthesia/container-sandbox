@@ -27,6 +27,7 @@ struct CodexTemplate: AgentTemplate {
     let containerfileContent: String? = SandboxBaseImage.containerfileContent + ##"""
 
 
-    RUN npm install -g @openai/codex
+    RUN npm install -g @openai/codex \
+        && test -x /home/sandbox/.local/bin/codex
     """##
 }

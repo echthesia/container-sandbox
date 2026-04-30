@@ -11,6 +11,7 @@ struct ClaudeTemplate: AgentTemplate {
 
     let passthroughEnvironment = [
         "ANTHROPIC_API_KEY",
+        "ANTHROPIC_AUTH_TOKEN",
         "CLAUDE_CODE_OAUTH_TOKEN",
         "CLAUDE_CODE_USE_BEDROCK",
         "CLAUDE_CODE_USE_VERTEX",
