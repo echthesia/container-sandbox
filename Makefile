@@ -25,7 +25,7 @@ PACKAGE_TGZ = $(DIST_DIR)/$(PACKAGE_NAME).tar.gz
 SIGN_IDENTITY ?= -
 NOTARY_PROFILE ?=
 
-.PHONY: build install link uninstall clean init-binaries verify lint format test package
+.PHONY: build install link uninstall clean init-binaries verify lint format test package stamp-version unstamp-version
 
 build:
 	swift build $(SWIFT_BUILD_FLAGS)
@@ -51,12 +51,26 @@ install: build init-binaries
 	$(MAKE) link
 	@echo "Done. Run 'container sandbox --help' to verify."
 
+# Stamp Version.swift with $(VERSION). Reverts on exit so a dirty working
+# tree never gets committed accidentally. Used by the release path only —
+# everyday `make build` keeps the checked-in "0.0.0-dev" marker.
+VERSION_FILE = Sources/ContainerSandbox/Version.swift
+
+stamp-version:
+	@if [ "$(VERSION)" = "dev" ]; then \
+		echo "stamp-version: refusing to stamp without VERSION=v...; got VERSION=dev"; exit 1; \
+	fi
+	@echo 'let containerSandboxVersion = "$(VERSION)"' > "$(VERSION_FILE)"
+
+unstamp-version:
+	@git checkout -- "$(VERSION_FILE)" 2>/dev/null || true
+
 # Build a release tarball at $(PACKAGE_TGZ). Layout matches STABLE_DIR so
 # downstream packagers (brew tap, install.sh) can drop it in directly.
 # Override VERSION on the command line, e.g. `make package VERSION=v0.1.0`.
 # Hardened-runtime signing uses --options runtime (required for notarization);
 # notarization runs only when NOTARY_PROFILE is set.
-package: build init-binaries
+package: stamp-version build init-binaries
 	rm -rf "$(PACKAGE_DIR)"
 	mkdir -p "$(PACKAGE_DIR)/bin" "$(PACKAGE_DIR)/libexec"
 	cp ".build/$(BUILD_CONFIG)/$(PLUGIN_NAME)" "$(PACKAGE_DIR)/bin/$(PLUGIN_NAME)"
@@ -80,6 +94,7 @@ package: build init-binaries
 	tar -C "$(DIST_DIR)" -czf "$(PACKAGE_TGZ)" "$(PACKAGE_NAME)"
 	shasum -a 256 "$(PACKAGE_TGZ)" | tee "$(PACKAGE_TGZ).sha256"
 	@echo "Packaged $(PACKAGE_TGZ)"
+	$(MAKE) unstamp-version
 
 # Create/update symlink from container plugin dir to stable location
 link:

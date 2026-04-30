@@ -6,7 +6,9 @@ let package = Package(
     name: "container-sandbox",
     platforms: [.macOS("26")],
     dependencies: [
-        .package(url: "https://github.com/apple/container.git", from: "0.12.1"),
+        // apple/container is pre-1.0 and minor bumps have broken API in the past;
+        // pin to next minor (>=0.12.1, <0.13) until upstream stabilizes.
+        .package(url: "https://github.com/apple/container.git", .upToNextMinor(from: "0.12.1")),
         .package(url: "https://github.com/apple/swift-argument-parser.git", from: "1.5.0"),
         .package(url: "https://github.com/apple/swift-nio.git", from: "2.80.0"),
     ],

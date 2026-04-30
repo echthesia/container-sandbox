@@ -8,6 +8,7 @@ struct SandboxCommand: AsyncParsableCommand {
     static let configuration = CommandConfiguration(
         commandName: "sandbox",
         abstract: "Sandbox environments for AI coding agents",
+        version: containerSandboxVersion,
         subcommands: [
             RunCommand.self,
             CreateCommand.self,
