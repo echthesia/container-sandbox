@@ -1,4 +1,5 @@
 import ContainerResource
+import ContainerizationExtras
 import ContainerizationOCI
 import Foundation
 import Testing
@@ -223,6 +224,123 @@ struct SandboxManagerLifecycleTests {
             "Pruning runs only after a successful build, not on cache hit. Stale: \(h.images.removedImages)")
         #expect(h.images.existingImages.contains(staleClaude), "Stale image should remain on cache hit")
         #expect(h.images.existingImages.contains(currentImage))
+    }
+
+    // MARK: - Network isolation invariant
+
+    @Test func creationExplicitlyDeclaresNoNetworksAndNoDNS() async throws {
+        let h = makeManager()
+
+        _ = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        let created = h.containers.createdConfigs[0]
+        // The proxy is the only sanctioned egress. A vNIC or in-VM resolver
+        // would silently bypass it.
+        #expect(created.networks.isEmpty, "Sandbox config must declare no network attachments")
+        #expect(created.dns == nil, "Sandbox config must declare no DNS configuration")
+    }
+
+    @Test func creationFailsAndCleansUpIfFrameworkAttachesNetworkConfig() async throws {
+        let h = makeManager()
+
+        // Simulate a framework that, despite our request for no networks,
+        // installs an attachment on the snapshot after create.
+        h.containers.afterCreate = { id in
+            guard var snapshot = h.containers.snapshots[id] else { return }
+            snapshot.configuration.networks = [
+                AttachmentConfiguration(network: "default", options: AttachmentOptions(hostname: "ignored"))
+            ]
+            h.containers.snapshots[id] = snapshot
+        }
+
+        await #expect(throws: SandboxError.self) {
+            try await h.manager.ensureSandboxExists(
+                template: ClaudeTemplate(),
+                workspace: testWorkspace
+            )
+        }
+
+        // Cleanup: the unsafe sandbox must be deleted and proxy state removed
+        // so the caller can't accidentally reach it via stale state.
+        let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
+        let name = SandboxNaming.sandboxName(agent: "claude", workspacePath: resolvedWorkspace)
+        #expect(h.containers.deletedIds.contains(name), "Unsafe sandbox must be deleted")
+        #expect(h.proxyStorage.removedNames.contains(name), "Proxy state must be removed")
+    }
+
+    @Test func creationFailsAndCleansUpIfFrameworkAttachesDNS() async throws {
+        let h = makeManager()
+
+        h.containers.afterCreate = { id in
+            guard var snapshot = h.containers.snapshots[id] else { return }
+            snapshot.configuration.dns = ContainerConfiguration.DNSConfiguration(
+                nameservers: ["1.1.1.1"]
+            )
+            h.containers.snapshots[id] = snapshot
+        }
+
+        await #expect(throws: SandboxError.self) {
+            try await h.manager.ensureSandboxExists(
+                template: ClaudeTemplate(),
+                workspace: testWorkspace
+            )
+        }
+
+        let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
+        let name = SandboxNaming.sandboxName(agent: "claude", workspacePath: resolvedWorkspace)
+        #expect(h.containers.deletedIds.contains(name), "Sandbox with DNS must be deleted")
+        #expect(h.proxyStorage.removedNames.contains(name), "Proxy state must be removed")
+    }
+
+    @Test func bootstrapFailsAndStopsIfRuntimeAttachesInterface() async throws {
+        let h = makeManager()
+
+        let (name, snapshot) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        // Simulate the runtime attaching an interface only at boot time —
+        // the create-time check sees a clean snapshot, but the runtime
+        // populates `snapshot.networks` once the VM actually boots.
+        h.containers.afterBootstrap = { id in
+            guard var stored = h.containers.snapshots[id] else { return }
+            let attachment = try? Attachment(
+                network: "default",
+                hostname: "ignored",
+                ipv4Address: CIDRv4("10.0.0.2/24"),
+                ipv4Gateway: IPv4Address("10.0.0.1"),
+                ipv6Address: nil,
+                macAddress: nil
+            )
+            if let attachment {
+                stored.networks = [attachment]
+                h.containers.snapshots[id] = stored
+            }
+        }
+
+        await #expect(throws: SandboxError.self) {
+            try await h.manager.bootstrapIfNeeded(name: name, snapshot: snapshot)
+        }
+        #expect(h.containers.stoppedIds.contains(name), "Sandbox must be stopped if runtime attaches an interface")
+    }
+
+    @Test func cleanCreationDoesNotTriggerNetworkIsolationFailure() async throws {
+        let h = makeManager()
+
+        // No afterCreate hook → snapshot stays clean → assertion passes.
+        let (name, snapshot) = try await h.manager.ensureSandboxExists(
+            template: ClaudeTemplate(),
+            workspace: testWorkspace
+        )
+
+        #expect(h.containers.deletedIds.isEmpty, "Clean creation must not trigger cleanup")
+        // Bootstrap should also pass with a clean snapshot.
+        try await h.manager.bootstrapIfNeeded(name: name, snapshot: snapshot)
+        #expect(h.containers.stoppedIds.isEmpty, "Clean bootstrap must not trigger stop")
     }
 
     @Test func creationFailsIfProxyBridgeMissing() {

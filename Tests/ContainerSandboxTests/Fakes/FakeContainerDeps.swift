@@ -17,6 +17,11 @@ final class FakeContainerOperations: ContainerOperations, @unchecked Sendable {
     var deletedIds: [String] = []
     var bootstrappedIds: [String] = []
     var exportedIds: [String] = []
+    /// Optional hooks invoked after `create`/`bootstrap` complete, allowing
+    /// tests to mutate `snapshots[id]` to simulate a framework that attached
+    /// network state we didn't ask for.
+    var afterCreate: (@Sendable (String) -> Void)?
+    var afterBootstrap: (@Sendable (String) -> Void)?
 
     func list() async throws -> [ContainerSnapshot] {
         Array(snapshots.values)
@@ -33,10 +38,12 @@ final class FakeContainerOperations: ContainerOperations, @unchecked Sendable {
         createdConfigs.append(configuration)
         // After creation, the container exists as stopped
         snapshots[configuration.id] = makeSnapshot(config: configuration, status: .stopped)
+        afterCreate?(configuration.id)
     }
 
     func bootstrap(id: String, stdio _: [FileHandle?]) async throws -> any ClientProcess {
         bootstrappedIds.append(id)
+        afterBootstrap?(id)
         return FakeClientProcess(id: id)
     }
 

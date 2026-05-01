@@ -15,6 +15,7 @@ enum SandboxError: LocalizedError {
     case invalidName(String)
     case nameTooLong(name: String, limit: Int)
     case reservedName(String)
+    case networkIsolationViolated(name: String, details: String)
 
     var errorDescription: String? {
         switch self {
@@ -46,6 +47,8 @@ enum SandboxError: LocalizedError {
             "Sandbox name '\(name)' is \(name.utf8.count) bytes; must be at most \(limit) (constrained by the in-guest socket relay path)."
         case .reservedName(let name):
             "'\(name)' is a built-in agent template name and cannot be used as a sandbox name."
+        case .networkIsolationViolated(let name, let details):
+            "Sandbox '\(name)' has unexpected network attachments (\(details)). The proxy is the only sanctioned egress; refusing to use this container."
         }
     }
 }

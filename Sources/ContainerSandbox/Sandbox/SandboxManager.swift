@@ -239,10 +239,58 @@ struct SandboxManager {
         config.resources.cpus = ProcessInfo.processInfo.processorCount
         config.resources.memoryInBytes = 8 * 1024 * 1024 * 1024
 
+        // Network isolation invariant. The sandbox must have no vNIC and no
+        // in-VM resolver. All egress flows through the per-sandbox proxy
+        // mounted as a Unix socket; an attached vNIC would silently bypass
+        // the proxy via NAT, and an in-VM DNS resolver would do the same for
+        // name resolution. These default to the values we want, but assign
+        // them explicitly so the invariant is grep-able and any future change
+        // is deliberate. The post-create assertion below enforces it at runtime.
+        config.networks = []
+        config.dns = nil
+
         try await containers.create(configuration: config, options: ContainerCreateOptions.default, kernel: await kernel, initImage: nil)
 
         let snapshot = try await containers.get(id: name)
+
+        // Defense in depth: verify the framework didn't attach anything we
+        // didn't ask for (API drift, future runtime, etc.). If it did, tear
+        // the sandbox down before returning so callers can't accidentally
+        // exec into an unfiltered container.
+        do {
+            try Self.assertNetworkIsolated(snapshot: snapshot)
+        } catch {
+            try? await containers.delete(id: name)
+            proxy.stop(name: name)
+            proxy.stateStorage.removeAll(for: name)
+            throw error
+        }
+
         return (name, snapshot)
+    }
+
+    /// Throw if the snapshot reveals any network attachment or DNS config.
+    /// Checks both the requested configuration and the actually-attached
+    /// runtime networks (the latter is populated after bootstrap).
+    static func assertNetworkIsolated(snapshot: ContainerSnapshot) throws {
+        var problems: [String] = []
+        if !snapshot.configuration.networks.isEmpty {
+            let names = snapshot.configuration.networks.map(\.network).joined(separator: ",")
+            problems.append("configuration.networks=[\(names)]")
+        }
+        if !snapshot.networks.isEmpty {
+            let names = snapshot.networks.map(\.network).joined(separator: ",")
+            problems.append("attached networks=[\(names)]")
+        }
+        if snapshot.configuration.dns != nil {
+            problems.append("dns configured")
+        }
+        if !problems.isEmpty {
+            throw SandboxError.networkIsolationViolated(
+                name: snapshot.id,
+                details: problems.joined(separator: ", ")
+            )
+        }
     }
 
     // MARK: - Lifecycle
@@ -269,6 +317,20 @@ struct SandboxManager {
         let process = try await containers.bootstrap(id: name, stdio: io.stdio)
         try await process.start()
         try io.closeAfterStart()
+
+        // Re-check the network invariant now that the VM has actually booted.
+        // The `networks` field on the snapshot is populated with the runtime's
+        // allocated attachments only after bootstrap; the create-time check
+        // can't see them. If anything is attached, stop the container so the
+        // caller can't exec into an unfiltered sandbox.
+        let postBoot = try await containers.get(id: name)
+        do {
+            try Self.assertNetworkIsolated(snapshot: postBoot)
+        } catch {
+            try? await containers.stop(id: name)
+            proxy.stop(name: name)
+            throw error
+        }
     }
 
     func runProcess(
