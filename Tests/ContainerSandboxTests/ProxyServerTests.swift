@@ -42,7 +42,7 @@ import Testing
             target: "127.0.0.1:\(echo.port)"
         )
         #expect(response.contains("HTTP/1.1 403"))
-        #expect(response.contains("private IP"))
+        #expect(response.contains("blocked IP"))
     }
 
     @Test func tunnelRelaysData() async throws {
@@ -192,7 +192,7 @@ import Testing
                 "GET http://127.0.0.1:\(echo.port)/ HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\n\r\n"
         )
         #expect(response.contains("HTTP/1.1 403"))
-        #expect(response.contains("private IP"))
+        #expect(response.contains("blocked IP"))
     }
 
     @Test func plainHTTPHostHeaderFallback() async throws {

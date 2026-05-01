@@ -168,14 +168,14 @@ final class ProxyServer: Sendable {
             return
         }
 
-        // CIDR check on the resolved IP (catches DNS rebinding to private addresses).
-        if let ip = resolvedBlockedIP(channel: remoteChannel.channel, filter: filter) {
-            proxyLog.warning("DENY (resolved CIDR) CONNECT \(host):\(port) -> \(ip)")
+        // Post-DNS IP check (catches a hostname resolving to a blocked IP or CIDR).
+        if let ip = resolvedBlockedIP(channel: remoteChannel.channel, filter: filter, port: port) {
+            proxyLog.warning("DENY (resolved IP) CONNECT \(host):\(port) -> \(ip)")
             try? await remoteChannel.channel.close()
             try await writeHTTPResponse(
                 outbound, allocator: channel.allocator,
                 status: 403, reason: "Forbidden",
-                body: "Blocked: resolved to private IP \(ip)\n"
+                body: "Blocked: resolved to blocked IP \(ip)\n"
             )
             return
         }
@@ -256,14 +256,14 @@ final class ProxyServer: Sendable {
             return
         }
 
-        // CIDR check on the resolved IP.
-        if let ip = resolvedBlockedIP(channel: remoteChannel.channel, filter: filter) {
-            proxyLog.warning("DENY (resolved CIDR) HTTP \(host):\(port) -> \(ip)")
+        // Post-DNS IP check (catches a hostname resolving to a blocked IP or CIDR).
+        if let ip = resolvedBlockedIP(channel: remoteChannel.channel, filter: filter, port: port) {
+            proxyLog.warning("DENY (resolved IP) HTTP \(host):\(port) -> \(ip)")
             try? await remoteChannel.channel.close()
             try await writeHTTPResponse(
                 outbound, allocator: channel.allocator,
                 status: 403, reason: "Forbidden",
-                body: "Blocked: resolved to private IP \(ip)\n"
+                body: "Blocked: resolved to blocked IP \(ip)\n"
             )
             return
         }
@@ -445,9 +445,9 @@ final class ProxyServer: Sendable {
             return
         }
 
-        // CIDR check on the resolved IP.
-        if let ip = resolvedBlockedIP(channel: remoteChannel.channel, filter: filter) {
-            proxyLog.warning("DENY (resolved CIDR) SOCKS5 \(host):\(port) -> \(ip)")
+        // Post-DNS IP check (catches a hostname resolving to a blocked IP or CIDR).
+        if let ip = resolvedBlockedIP(channel: remoteChannel.channel, filter: filter, port: port) {
+            proxyLog.warning("DENY (resolved IP) SOCKS5 \(host):\(port) -> \(ip)")
             try? await remoteChannel.channel.close()
             try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .notAllowed)
             return
@@ -726,18 +726,19 @@ private func formatIPv6(_ bytes: [UInt8]) -> String? {
     return String(decoding: buf[..<nulIndex], as: UTF8.self)
 }
 
-// MARK: - Shared CIDR Check
+// MARK: - Shared post-DNS IP Check
 
-/// Extract the resolved IP from a connected channel and check it against blocked CIDRs.
-/// Returns the blocked IP string if blocked, nil if allowed.
-private func resolvedBlockedIP(channel: Channel, filter: DomainFilter) -> String? {
+/// Extract the resolved IP from a connected channel and check it against any
+/// blocked-IP rule (blockedCIDRs and IP entries in blockedHosts). Returns the
+/// blocked IP string if blocked, nil if allowed.
+private func resolvedBlockedIP(channel: Channel, filter: DomainFilter, port: Int) -> String? {
     let resolvedIP: String?
     switch channel.remoteAddress {
     case .v4(let addr): resolvedIP = addr.host
     case .v6(let addr): resolvedIP = addr.host
     default: resolvedIP = nil
     }
-    guard let ip = resolvedIP, filter.isBlockedCIDR(ip) else { return nil }
+    guard let ip = resolvedIP, filter.isBlockedResolvedIP(ip, port: port) else { return nil }
     return ip
 }
 

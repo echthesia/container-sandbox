@@ -449,6 +449,56 @@ struct DomainFilterTests {
         #expect(filter.isBlockedCIDR("::1"))
         #expect(!filter.isBlockedCIDR("::2"))
     }
+
+    // MARK: - Post-DNS resolved-IP check (blockedHosts IPs + CIDRs)
+
+    @Test func resolvedIPMatchesBlockedHostsIPv4() {
+        // Hostname-then-resolve: agent connects to evil.example, DNS resolves
+        // to 1.2.3.4, which the user blocked by IP literal. The post-DNS check
+        // must catch this — upfront evaluate() only sees the hostname.
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["1.2.3.4"], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(filter.isBlockedResolvedIP("1.2.3.4", port: 443))
+        #expect(!filter.isBlockedResolvedIP("1.2.3.5", port: 443))
+    }
+
+    @Test func resolvedIPMatchesBlockedHostsIPv6() {
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["2001:db8::dead"], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(filter.isBlockedResolvedIP("2001:db8::dead", port: 443))
+        #expect(!filter.isBlockedResolvedIP("2001:db8::beef", port: 443))
+    }
+
+    @Test func resolvedIPRespectsPortInBlockedHosts() {
+        // 1.2.3.4:443 should only block port 443 — port 80 must pass.
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["1.2.3.4:443"], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(filter.isBlockedResolvedIP("1.2.3.4", port: 443))
+        #expect(!filter.isBlockedResolvedIP("1.2.3.4", port: 80))
+    }
+
+    @Test func resolvedIPMatchesIPv4MappedAcrossFamilies() {
+        // blockedHosts entry stored as plain IPv4; resolved peer arrives as
+        // ::ffff:10.0.0.1 — matchesHost normalization should bridge the gap.
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["10.0.0.1"], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(filter.isBlockedResolvedIP("::ffff:10.0.0.1", port: 443))
+    }
+
+    @Test func resolvedIPStillCatchesCIDR() {
+        // The combined check must still fall through to blockedCIDRs.
+        let filter = DomainFilter(policy: .deny)
+        #expect(filter.isBlockedResolvedIP("10.0.0.1", port: 443))
+        #expect(!filter.isBlockedResolvedIP("8.8.8.8", port: 443))
+    }
 }
 
 // MARK: - Adversarial: IPv4-mapped IPv6 cross-family matching

@@ -44,6 +44,23 @@ struct DomainFilter {
         }
     }
 
+    /// Post-DNS check for a resolved peer IP: returns true if the address is
+    /// blocked by either an explicit IP entry in `blockedHosts` or any
+    /// `blockedCIDRs` rule. The upfront `evaluate` call already covers IP
+    /// literals supplied as the request target; this catches the DNS-rebinding
+    /// case where a hostname resolves to an IP we want to block.
+    func isBlockedResolvedIP(_ ip: String, port: Int) -> Bool {
+        // blockedHosts may contain IP entries (parsed into blocked.ipv4s/ipv6s
+        // at init time). Reuse the existing host-matching path so IPv4-mapped
+        // IPv6 normalization and port-scoped entries behave the same as in
+        // the upfront evaluate() call.
+        let resolved = Self.resolveHost(ip)
+        if matchesHost(resolved, port: port, in: blocked) {
+            return true
+        }
+        return isBlockedCIDR(ip)
+    }
+
     /// Check whether a resolved IP address falls within any blocked CIDR range.
     /// Also detects IPv4-mapped IPv6 addresses (e.g. ::ffff:127.0.0.1) and checks
     /// the embedded IPv4 against IPv4 CIDRs.
