@@ -37,23 +37,21 @@ struct DomainFilter {
         // so we don't run inet_pton twice per request in deny mode.
         let resolved = Self.resolveHost(host)
 
-        // 1. Explicit blocklist always wins.
         if matchesHost(resolved, port: port, in: blocked) {
             return .deny(reason: "host explicitly blocked: \(host)")
         }
 
-        // 2. Explicit allowlist match short-circuits — a user who put an IP
-        //    in allowedHosts intends it to be reachable even if it lies in a
-        //    default-blocked CIDR.
+        // Explicit allowlist match short-circuits — a user who put an IP in
+        // allowedHosts intends it to be reachable even if it lies in a
+        // default-blocked CIDR.
         if matchesHost(resolved, port: port, in: allowed) {
             return .allow
         }
 
-        // 3. For IP-literal targets, pre-check blockedCIDRs so the proxy
-        //    doesn't issue a TCP SYN to a private/loopback target before the
-        //    post-connect filter fires (port-scan side channel). Domain
-        //    names defer to the post-DNS check since resolution happens at
-        //    connect time.
+        // For IP-literal targets, pre-check blockedCIDRs so the proxy doesn't
+        // issue a TCP SYN to a private/loopback target before the post-connect
+        // filter fires (port-scan side channel). Domain names defer to the
+        // post-DNS check since resolution happens at connect time.
         switch resolved {
         case .domain:
             break
@@ -63,7 +61,6 @@ struct DomainFilter {
             }
         }
 
-        // 4. Direction-based default.
         switch policy.direction {
         case .deny:
             return .deny(reason: "host not in allowlist: \(host)")

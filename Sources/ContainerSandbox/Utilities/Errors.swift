@@ -7,6 +7,7 @@ enum SandboxError: LocalizedError {
     case imageBuildFailed(String)
     case proxyStartFailed(String)
     case proxyBridgeMissing
+    case sessionWriteFailed(String)
     case extraWorkspaceMismatch(name: String)
     case workspaceMismatch(name: String, existing: String, requested: String)
     case agentMismatch(name: String, existing: String, requested: String)
@@ -31,6 +32,8 @@ enum SandboxError: LocalizedError {
             "Failed to start network proxy: \(message)"
         case .proxyBridgeMissing:
             "proxy-bridge binary not found. Run 'make install' to build and install it."
+        case .sessionWriteFailed(let message):
+            "Failed to write session file: \(message)"
         case .extraWorkspaceMismatch(let name):
             "Sandbox '\(name)' has different extra workspace mounts. Run 'sandbox rm \(name)' to recreate."
         case .workspaceMismatch(let name, let existing, let requested):

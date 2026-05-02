@@ -268,7 +268,7 @@ struct SandboxManagerLifecycleTests {
         let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
         let name = SandboxNaming.sandboxName(agent: "claude", workspacePath: resolvedWorkspace)
         #expect(h.containers.deletedIds.contains(name), "Unsafe sandbox must be deleted")
-        #expect(h.proxyStorage.removedNames.contains(name), "Proxy state must be removed")
+        #expect(h.proxyStorage.removedAllNames.contains(name), "Proxy state must be fully removed (policy too) on create-time isolation failure")
     }
 
     @Test func creationFailsAndCleansUpIfFrameworkAttachesDNS() async throws {
@@ -292,7 +292,7 @@ struct SandboxManagerLifecycleTests {
         let resolvedWorkspace = SandboxManager.resolveWorkspacePath(testWorkspace)
         let name = SandboxNaming.sandboxName(agent: "claude", workspacePath: resolvedWorkspace)
         #expect(h.containers.deletedIds.contains(name), "Sandbox with DNS must be deleted")
-        #expect(h.proxyStorage.removedNames.contains(name), "Proxy state must be removed")
+        #expect(h.proxyStorage.removedAllNames.contains(name), "Proxy state must be fully removed (policy too) on create-time isolation failure")
     }
 
     @Test func bootstrapFailsAndStopsIfRuntimeAttachesInterface() async throws {

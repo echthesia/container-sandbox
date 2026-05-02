@@ -263,8 +263,11 @@ import Testing
 
         // Either the proxy rejected the request (no bytes at origin) or it
         // forwarded scrubbed bytes — either way the bare-LF pattern must
-        // not appear verbatim in what the origin saw.
-        let bytes = (try? await capture.waitForBytes(atLeast: 1, timeout: .seconds(1))) ?? []
+        // not appear verbatim in what the origin saw. The proxy rejects this
+        // request before connecting to origin, so the success path is "no
+        // bytes received"; a short timeout keeps CI fast since we expect the
+        // wait to fall through.
+        let bytes = (try? await capture.waitForBytes(atLeast: 1, timeout: .milliseconds(100))) ?? []
         let received = String(bytes: bytes, encoding: .utf8) ?? ""
         #expect(!received.contains("X-Pwn\nHost: smuggled.example.com"))
     }

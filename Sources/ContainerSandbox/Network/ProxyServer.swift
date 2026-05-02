@@ -686,9 +686,7 @@ private func parseRequestBytes(_ buffer: ByteBuffer) throws -> HTTPRequest {
         // would survive parsing and re-emit verbatim — origins that accept
         // bare LF as a line terminator would treat it as two headers
         // (request-splitting at the origin).
-        guard !name.isEmpty,
-            !name.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
-        else {
+        guard !name.isEmpty, !DomainFilter.hasControlCharacters(name) else {
             throw ProxyError.malformedRequest
         }
         headers.append((name: name, value: value))

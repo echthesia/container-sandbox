@@ -41,7 +41,7 @@ struct FileSessionStorage: SessionStorage {
         let created = FileManager.default.createFile(
             atPath: sessionFile.path, contents: data, attributes: [.posixPermissions: 0o600])
         guard created else {
-            throw SandboxError.proxyStartFailed("failed to create session file")
+            throw SandboxError.sessionWriteFailed(sessionFile.path)
         }
     }
 

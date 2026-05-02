@@ -229,18 +229,10 @@ struct SessionTrackerIntegrationTests {
         try storage.createSession(containerId: "test", sessionId: "abc", pid: 1234)
 
         let sessionFile = tmp.appendingPathComponent("test/sessions/abc")
-        #expect(fileMode(of: sessionFile) == 0o600)
-        #expect(fileMode(of: sessionFile.deletingLastPathComponent()) == 0o700)
+        #expect(modeBits(of: sessionFile) == 0o600)
+        #expect(modeBits(of: sessionFile.deletingLastPathComponent()) == 0o700)
         #expect(
-            fileMode(of: sessionFile.deletingLastPathComponent().deletingLastPathComponent())
+            modeBits(of: sessionFile.deletingLastPathComponent().deletingLastPathComponent())
                 == 0o700)
     }
-}
-
-// MARK: - Test helpers
-
-private func fileMode(of url: URL) -> mode_t {
-    var st = stat()
-    guard stat(url.path, &st) == 0 else { return 0 }
-    return st.st_mode & 0o777
 }

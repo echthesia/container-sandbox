@@ -69,7 +69,7 @@ struct ProxyManagerTests {
 
         // The failed proxy should be killed and its runtime state cleaned up.
         #expect(launcher.killedPIDs == [1000], "Should kill the launched proxy")
-        #expect(storage.removedNames.contains("test"), "Should remove runtime state")
+        #expect(storage.removedRuntimeNames.contains("test"), "Should remove runtime state (policy must survive)")
         #expect(storage.states["test"] == nil, "Saved state should be cleared")
     }
 
@@ -90,7 +90,7 @@ struct ProxyManagerTests {
 
         #expect(launcher.killedPIDs.contains(42))
         #expect(!storage.sockets.contains("/tmp/cs-proxy-test.sock"))
-        #expect(storage.removedNames.contains("test"))
+        #expect(storage.removedRuntimeNames.contains("test"))
         // Policy config must survive stop (persists across restart).
         #expect(
             storage.writtenPolicies["test"] == .allow,
@@ -293,10 +293,4 @@ private func makeTempStateDir() -> URL {
         fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp",
         isDirectory: true)
     return base.appendingPathComponent("state-perms-\(UUID().uuidString)", isDirectory: true)
-}
-
-private func modeBits(of url: URL) -> mode_t {
-    var st = stat()
-    guard stat(url.path, &st) == 0 else { return 0 }
-    return st.st_mode & 0o777
 }

@@ -59,15 +59,21 @@ struct SandboxManager {
 
     // MARK: - Image Management
 
-    func buildImageIfNeeded(template: any AgentTemplate) async throws {
-        if try await images.imageExists(reference: template.defaultImage) {
-            return
+    /// Ensures the template image exists, building it if missing.
+    /// Returns the image reference so callers don't recompute it (the default
+    /// `defaultImage` impl hashes the multi-KB Containerfile on every access).
+    @discardableResult
+    func buildImageIfNeeded(template: any AgentTemplate) async throws -> String {
+        let imageRef = template.defaultImage
+        if try await images.imageExists(reference: imageRef) {
+            return imageRef
         }
         guard let containerfileContent = template.containerfileContent else {
-            return
+            return imageRef
         }
-        try await images.buildImage(tag: template.defaultImage, containerfileContent: containerfileContent)
-        await pruneStaleImages(for: template)
+        try await images.buildImage(tag: imageRef, containerfileContent: containerfileContent)
+        await pruneStaleImages(for: template, current: imageRef)
+        return imageRef
     }
 
     /// After a fresh build, remove any older content-addressed images for the
@@ -76,21 +82,29 @@ struct SandboxManager {
     /// is safe even if older versions are still in use by stopped sandboxes.
     /// Best-effort: a removal failure (image still pinned, transient API
     /// error) is logged and swallowed rather than failing sandbox creation.
-    private func pruneStaleImages(for template: any AgentTemplate) async {
-        let prefix = "container-sandbox-\(template.name):sha-"
-        let current = template.defaultImage
+    private func pruneStaleImages(for template: any AgentTemplate, current: String) async {
+        let prefix = template.imageReferencePrefix
         let allImages: [String]
         do {
             allImages = try await images.listImages()
         } catch {
-            log.warning("Failed to list images for stale-image GC: \(error)")
+            log.warning("Failed to list images for stale-image GC of '\(template.name)': \(error)")
             return
         }
-        for ref in allImages where ref.hasPrefix(prefix) && ref != current {
-            do {
-                try await images.removeImage(reference: ref)
-            } catch {
-                log.info("Skipped stale image \(ref) (still in use or unavailable): \(error)")
+        let stale = allImages.filter { $0.hasPrefix(prefix) && $0 != current }
+        // ContainerClient has no bulk-delete; each removeImage is an XPC
+        // round-trip, so fan out to keep total time bounded by the slowest
+        // delete instead of summed.
+        let images = self.images
+        await withTaskGroup(of: Void.self) { group in
+            for ref in stale {
+                group.addTask {
+                    do {
+                        try await images.removeImage(reference: ref)
+                    } catch {
+                        log.info("Skipped stale image \(ref) (still in use or unavailable): \(error)")
+                    }
+                }
             }
         }
     }
@@ -146,13 +160,13 @@ struct SandboxManager {
 
         let platform: ContainerizationOCI.Platform = .current
 
-        try await buildImageIfNeeded(template: template)
+        let imageRef = try await buildImageIfNeeded(template: template)
 
         // Kernel fetch is independent of image setup — overlap them.
         async let kernel = kernels.getDefaultKernel()
 
-        let imageDesc = try await images.prepareImage(reference: template.defaultImage, platform: platform)
-        let imageConfig = try await images.getImageConfig(reference: template.defaultImage, platform: platform)
+        let imageDesc = try await images.prepareImage(reference: imageRef, platform: platform)
+        let imageConfig = try await images.getImageConfig(reference: imageRef, platform: platform)
 
         // Layer proxy env vars onto the init's environment so dockerd (forked
         // by sandbox-init) inherits HTTP_PROXY for image pulls. The sandbox

@@ -37,7 +37,13 @@ final class FakeProxyLauncher: ProxyLauncher, @unchecked Sendable {
 final class FakeProxyStateStorage: ProxyStateStorage, @unchecked Sendable {
     var states: [String: ProxyState] = [:]
     var sockets: Set<String> = []
-    var removedNames: [String] = []
+    /// Names passed to `removeRuntimeState`. Tracked separately from
+    /// `removedAllNames` so tests can assert which API production invoked;
+    /// aliasing them would silently mask a regression where production calls
+    /// `removeRuntimeState` (preserves policy) instead of `removeAll`.
+    var removedRuntimeNames: [String] = []
+    /// Names passed to `removeAll`.
+    var removedAllNames: [String] = []
     /// Tracks policies written via writePolicy, keyed by sandbox name.
     var writtenPolicies: [String: NetworkPolicy] = [:]
     /// When true, startIfNeeded's polling loop will find the socket.
@@ -60,12 +66,13 @@ final class FakeProxyStateStorage: ProxyStateStorage, @unchecked Sendable {
 
     func removeRuntimeState(for name: String) {
         states.removeValue(forKey: name)
-        removedNames.append(name)
+        removedRuntimeNames.append(name)
     }
 
     func removeAll(for name: String) {
-        removeRuntimeState(for: name)
+        states.removeValue(forKey: name)
         writtenPolicies.removeValue(forKey: name)
+        removedAllNames.append(name)
     }
 
     @discardableResult

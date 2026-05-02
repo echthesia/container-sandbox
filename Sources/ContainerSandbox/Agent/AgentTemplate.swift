@@ -26,6 +26,14 @@ extension AgentTemplate {
         .allow
     }
 
+    /// Tag prefix shared between `defaultImage` (which appends a content hash)
+    /// and the stale-image GC path in SandboxManager. Centralized so a future
+    /// format change can't desync the two — diverging the suffix would silently
+    /// stop GC from matching, leaking images.
+    var imageReferencePrefix: String {
+        "container-sandbox-\(name):sha-"
+    }
+
     /// Default tag derives from `name` plus an 8-hex SHA256 prefix of the
     /// containerfile content, so any edit to the Containerfile invalidates
     /// the cached image automatically: `container-sandbox-claude:sha-abc12345`.
@@ -36,7 +44,7 @@ extension AgentTemplate {
             preconditionFailure(
                 "AgentTemplate '\(name)' has no containerfileContent — must override defaultImage with an external reference")
         }
-        return "container-sandbox-\(name):sha-\(SandboxNaming.shortHash(content))"
+        return imageReferencePrefix + SandboxNaming.shortHash(content)
     }
 }
 
