@@ -12,10 +12,17 @@ protocol SessionStorage: Sendable {
 }
 
 /// Default filesystem-backed session storage.
-/// Session files live under `~/.local/state/container-sandbox/{containerId}/sessions/`.
+/// Session files live under `<baseDir>/{containerId}/sessions/`. The base dir
+/// defaults to `~/.local/state/container-sandbox/` and is overridable for tests.
 struct FileSessionStorage: SessionStorage {
-    private let baseDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".local/state/container-sandbox")
+    let baseDir: URL
+
+    init(
+        baseDir: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/state/container-sandbox")
+    ) {
+        self.baseDir = baseDir
+    }
 
     private func sessionsDir(for containerId: String) -> URL {
         baseDir.appendingPathComponent(containerId).appendingPathComponent("sessions")
@@ -24,8 +31,18 @@ struct FileSessionStorage: SessionStorage {
     func createSession(containerId: String, sessionId: String, pid: Int32) throws {
         let dir = sessionsDir(for: containerId)
         try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Tighten the dir + its parents — createDirectory(attributes:) only
+        // applies to the leaf, so chmod the chain explicitly.
+        chmod(baseDir.path, 0o700)
+        chmod(dir.deletingLastPathComponent().path, 0o700)
+        chmod(dir.path, 0o700)
         let sessionFile = dir.appendingPathComponent(sessionId)
-        try "\(pid)".write(to: sessionFile, atomically: true, encoding: .utf8)
+        let data = "\(pid)".data(using: .utf8) ?? Data()
+        let created = FileManager.default.createFile(
+            atPath: sessionFile.path, contents: data, attributes: [.posixPermissions: 0o600])
+        guard created else {
+            throw SandboxError.proxyStartFailed("failed to create session file")
+        }
     }
 
     func removeSession(containerId: String, sessionId: String) throws {

@@ -89,8 +89,11 @@ enum SandboxBaseImage {
         RUN git config --system init.defaultBranch main \
             && git config --system safe.directory '*'
 
-        # uv vendored from Astral's official image — pinned, checksum-verified upstream.
-        COPY --from=ghcr.io/astral-sh/uv:0.11.7 /uv /usr/local/bin/uv
+        # uv vendored from Astral's official image — pinned by manifest digest
+        # (immutable) rather than tag (mutable). Update by looking up the
+        # digest of the desired version on GHCR; bumping the tag in the
+        # comment alone is a no-op.
+        COPY --from=ghcr.io/astral-sh/uv@sha256:240fb85ab0f263ef12f492d8476aa3a2e4e1e333f7d67fbdd923d00a506a516a /uv /usr/local/bin/uv  # v0.11.7
 
         USER sandbox
         WORKDIR /home/sandbox

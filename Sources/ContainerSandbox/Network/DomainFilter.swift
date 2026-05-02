@@ -23,25 +23,67 @@ struct DomainFilter {
 
     /// Evaluate whether a connection to `host:port` should be allowed.
     func evaluate(host: String, port: Int) -> Decision {
+        // Reject hostnames with control characters before any matching:
+        // Swift String permits embedded NUL/CR/LF, but libc's getaddrinfo
+        // (reached via NIO's connect-by-host) truncates at the first NUL,
+        // so a host like "evil.com\0.example.com" would match a wildcard
+        // ".example.com" via hasSuffix while resolving as "evil.com".
+        if Self.hasControlCharacters(host) {
+            return .deny(reason: "host contains control characters")
+        }
+
         let host = Self.normalizeHostPattern(host)
         // Parse the host string once; both list checks below reuse the result
         // so we don't run inet_pton twice per request in deny mode.
         let resolved = Self.resolveHost(host)
 
+        // 1. Explicit blocklist always wins.
         if matchesHost(resolved, port: port, in: blocked) {
             return .deny(reason: "host explicitly blocked: \(host)")
         }
 
+        // 2. Explicit allowlist match short-circuits — a user who put an IP
+        //    in allowedHosts intends it to be reachable even if it lies in a
+        //    default-blocked CIDR.
+        if matchesHost(resolved, port: port, in: allowed) {
+            return .allow
+        }
+
+        // 3. For IP-literal targets, pre-check blockedCIDRs so the proxy
+        //    doesn't issue a TCP SYN to a private/loopback target before the
+        //    post-connect filter fires (port-scan side channel). Domain
+        //    names defer to the post-DNS check since resolution happens at
+        //    connect time.
+        switch resolved {
+        case .domain:
+            break
+        case .ipv4, .ipv6:
+            if isBlockedCIDR(host) {
+                return .deny(reason: "host in blocked CIDR: \(host)")
+            }
+        }
+
+        // 4. Direction-based default.
         switch policy.direction {
         case .deny:
-            if matchesHost(resolved, port: port, in: allowed) {
-                return .allow
-            }
             return .deny(reason: "host not in allowlist: \(host)")
 
         case .allow:
             return .allow
         }
+    }
+
+    /// Returns true if the host string contains any C0 control character
+    /// (U+0000–U+001F) or DEL (U+007F). Such characters can desync the Swift
+    /// filter (which sees the full string) from libc's C-string-bridged
+    /// resolver (which truncates at NUL) — see `evaluate`.
+    static func hasControlCharacters(_ host: String) -> Bool {
+        for scalar in host.unicodeScalars {
+            if scalar.value < 0x20 || scalar.value == 0x7F {
+                return true
+            }
+        }
+        return false
     }
 
     /// Post-DNS check for a resolved peer IP: returns true if the address is

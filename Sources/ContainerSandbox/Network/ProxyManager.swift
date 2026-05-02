@@ -57,7 +57,10 @@ struct SystemProxyLauncher: ProxyLauncher {
         process.arguments = arguments
         process.standardInput = FileHandle.nullDevice
         process.standardOutput = FileHandle.nullDevice
-        FileManager.default.createFile(atPath: logPath.path, contents: nil)
+        // 0o600 — the log records visited hostnames; on multi-user hosts a
+        // 0o644 default would let other local users see what was contacted.
+        FileManager.default.createFile(
+            atPath: logPath.path, contents: nil, attributes: [.posixPermissions: 0o600])
         process.standardError = FileHandle(forWritingAtPath: logPath.path) ?? FileHandle.nullDevice
         process.qualityOfService = .utility
         try process.run()
@@ -74,17 +77,36 @@ struct SystemProxyLauncher: ProxyLauncher {
 }
 
 /// Default filesystem-backed state storage for proxy management.
-/// All per-sandbox state lives under `~/.local/state/container-sandbox/{name}/`.
+/// All per-sandbox state lives under `<stateDir>/{name}/`. The state dir
+/// defaults to `~/.local/state/container-sandbox/` and is overridable for tests.
+///
+/// Files written here can carry sensitive data — sandbox names (workspace
+/// hashes), the network policy, and the proxy log (visited hostnames) — so
+/// every directory is created 0o700 and every file 0o600. `chmod` runs after
+/// creation since `FileManager.createDirectory(attributes:)` only applies
+/// attributes to the leaf, not intermediates.
 struct FileProxyStateStorage: ProxyStateStorage {
-    private let stateDir = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".local/state/container-sandbox")
+    let stateDir: URL
+
+    init(
+        stateDir: URL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".local/state/container-sandbox")
+    ) {
+        self.stateDir = stateDir
+    }
 
     private func sandboxDir(for name: String) -> URL {
         stateDir.appendingPathComponent(name)
     }
 
     func ensureStateDirectory(for name: String) throws {
-        try FileManager.default.createDirectory(at: sandboxDir(for: name), withIntermediateDirectories: true)
+        let dir = sandboxDir(for: name)
+        try FileManager.default.createDirectory(at: dir, withIntermediateDirectories: true)
+        // Tighten both leaf and parent. `createDirectory(attributes:)` only
+        // applies to the leaf even when intermediates are created, and we
+        // want the parent (which lists every sandbox name) private too.
+        chmod(stateDir.path, 0o700)
+        chmod(dir.path, 0o700)
     }
 
     func loadState(for name: String) throws -> ProxyState? {
@@ -96,12 +118,15 @@ struct FileProxyStateStorage: ProxyStateStorage {
 
     func saveState(_ state: ProxyState, for name: String) throws {
         let data = try JSONEncoder().encode(state)
-        try data.write(to: sandboxDir(for: name).appendingPathComponent("proxy.json"), options: .atomic)
+        try Self.writePrivateFile(
+            data, to: sandboxDir(for: name).appendingPathComponent("proxy.json"))
     }
 
     func removeRuntimeState(for name: String) {
         let dir = sandboxDir(for: name)
-        for file in ["proxy.json", "proxy.lock", "proxy.log"] {
+        // proxy.lock is intentionally preserved across runtime teardown so
+        // flock semantics stay path-stable across stop+start cycles.
+        for file in ["proxy.json", "proxy.log"] {
             try? FileManager.default.removeItem(at: dir.appendingPathComponent(file))
         }
     }
@@ -114,7 +139,7 @@ struct FileProxyStateStorage: ProxyStateStorage {
     func writePolicy(_ policy: NetworkPolicy, for name: String) throws -> String {
         let configPath = sandboxDir(for: name).appendingPathComponent("policy.json")
         let data = try JSONEncoder().encode(policy)
-        try data.write(to: configPath, options: .atomic)
+        try Self.writePrivateFile(data, to: configPath)
         return configPath.path
     }
 
@@ -149,7 +174,8 @@ struct FileProxyStateStorage: ProxyStateStorage {
 
     func acquireLock(for name: String) throws -> ProxyLockHandle {
         let lockPath = sandboxDir(for: name).appendingPathComponent("proxy.lock").path
-        FileManager.default.createFile(atPath: lockPath, contents: nil)
+        FileManager.default.createFile(
+            atPath: lockPath, contents: nil, attributes: [.posixPermissions: 0o600])
         let fd = open(lockPath, O_RDWR | O_CLOEXEC)
         guard fd >= 0 else {
             throw SandboxError.proxyStartFailed("failed to open proxy lock file")
@@ -159,6 +185,23 @@ struct FileProxyStateStorage: ProxyStateStorage {
             throw SandboxError.proxyStartFailed("failed to acquire proxy lock")
         }
         return ProxyLockHandle(fd: fd)
+    }
+
+    /// Atomic-ish write at 0o600. `Data.write(to:options:.atomic)` doesn't
+    /// take a permissions parameter, so we write to a temp file with
+    /// explicit perms and rename into place.
+    private static func writePrivateFile(_ data: Data, to url: URL) throws {
+        let tmp = url.appendingPathExtension("tmp")
+        let created = FileManager.default.createFile(
+            atPath: tmp.path, contents: data, attributes: [.posixPermissions: 0o600])
+        guard created else {
+            throw SandboxError.proxyStartFailed("failed to create \(tmp.path)")
+        }
+        // rename(2) is atomic on the same filesystem.
+        if rename(tmp.path, url.path) != 0 {
+            try? FileManager.default.removeItem(at: tmp)
+            throw SandboxError.proxyStartFailed("failed to rename \(tmp.path) -> \(url.path)")
+        }
     }
 }
 
@@ -281,7 +324,14 @@ struct ProxyManager {
     }
 
     /// Stop the proxy for a sandbox, preserving the persistent policy config.
+    /// Holds the per-sandbox lock so concurrent `startIfNeeded` for the same
+    /// sandbox can't race and leave duplicate `_proxy` processes.
     func stop(name: String) {
+        // Best-effort lock — if the state dir doesn't exist, there's nothing
+        // to race against, so proceed without a lock.
+        let lock = try? stateStorage.acquireLock(for: name)
+        defer { withExtendedLifetime(lock) {} }
+
         if let state = try? stateStorage.loadState(for: name) {
             if launcher.isProcessAlive(pid: state.pid) {
                 launcher.killProcess(pid: state.pid)

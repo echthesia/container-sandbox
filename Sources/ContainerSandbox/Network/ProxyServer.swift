@@ -6,9 +6,12 @@ import NIOPosix
 private let proxyLog = Logger(label: "container-sandbox.proxy")
 
 /// Hop-by-hop headers (RFC 7230 §6.1) stripped when forwarding plain HTTP requests.
+/// `transfer-encoding` is included so the forward path can't be paired with a
+/// `Content-Length` of a different size to produce TE/CL request smuggling at
+/// the origin (RFC 7230 §3.3.3).
 private let hopByHopHeaders: Set<String> = [
     "proxy-authorization", "proxy-connection", "connection",
-    "te", "keep-alive", "upgrade", "trailer",
+    "te", "transfer-encoding", "keep-alive", "upgrade", "trailer",
 ]
 
 /// A multi-protocol proxy that listens on a Unix domain socket.
@@ -230,7 +233,9 @@ final class ProxyServer: Sendable {
         let decision = filter.evaluate(host: host, port: port)
         switch decision {
         case .allow:
-            proxyLog.info("ALLOW HTTP \(request.method) \(host):\(port)\(path)")
+            // Strip query string before logging — it commonly carries bearer
+            // tokens / signed-URL secrets that shouldn't land in a log file.
+            proxyLog.info("ALLOW HTTP \(request.method) \(host):\(port)\(scrubQuery(path))")
         case .deny(let reason):
             proxyLog.info("DENY HTTP \(request.method) \(host):\(port): \(reason)")
             try await writeHTTPResponse(
@@ -676,6 +681,16 @@ private func parseRequestBytes(_ buffer: ByteBuffer) throws -> HTTPRequest {
         let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
             in: .whitespaces
         )
+        // Reject header names that contain control characters. The split on
+        // "\r\n" doesn't split on bare CR or LF, so a name like "X-Foo\nHost"
+        // would survive parsing and re-emit verbatim — origins that accept
+        // bare LF as a line terminator would treat it as two headers
+        // (request-splitting at the origin).
+        guard !name.isEmpty,
+            !name.unicodeScalars.contains(where: { $0.value < 0x20 || $0.value == 0x7F })
+        else {
+            throw ProxyError.malformedRequest
+        }
         headers.append((name: name, value: value))
     }
 
@@ -724,6 +739,17 @@ private func formatIPv6(_ bytes: [UInt8]) -> String? {
     guard ok, let nulIndex = buf.firstIndex(of: 0) else { return nil }
     // swiftlint:disable:next optional_data_string_conversion
     return String(decoding: buf[..<nulIndex], as: UTF8.self)
+}
+
+// MARK: - Query-string scrubbing
+
+/// Replace `?...` with `?<scrubbed>` so bearer tokens, signed-URL secrets,
+/// and OAuth codes that ride in query strings don't land in the log file.
+/// Logs are mode 0600 but defense-in-depth: a token that's never written
+/// can't leak.
+private func scrubQuery(_ path: String) -> String {
+    guard let q = path.firstIndex(of: "?") else { return path }
+    return String(path[..<q]) + "?<scrubbed>"
 }
 
 // MARK: - Shared post-DNS IP Check

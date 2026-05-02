@@ -33,16 +33,13 @@ import Testing
 
     @Test func cidrBlocksPrivateIP() async throws {
         // Allow mode passes the domain filter, but 127.0.0.1 is in default blocked CIDRs.
-        // Start a real local server so the TCP connect succeeds — the CIDR check fires post-connect.
-        let echo = try await EchoServer.start()
-        defer { echo.shutdown() }
-
+        // The CIDR check fires pre-connect for IP literals, so no listener is needed.
         let response = try await proxyConnect(
             policy: .allow,
-            target: "127.0.0.1:\(echo.port)"
+            target: "127.0.0.1:9999"
         )
         #expect(response.contains("HTTP/1.1 403"))
-        #expect(response.contains("blocked IP"))
+        #expect(response.contains("blocked CIDR"))
     }
 
     @Test func tunnelRelaysData() async throws {
@@ -183,16 +180,14 @@ import Testing
     }
 
     @Test func plainHTTPCIDRBlocksPrivateIP() async throws {
-        let echo = try await EchoServer.start()
-        defer { echo.shutdown() }
-
+        // CIDR check is pre-connect for IP literals, so no listener is needed.
         let response = try await proxySend(
             policy: .allow,
             request:
-                "GET http://127.0.0.1:\(echo.port)/ HTTP/1.1\r\nHost: 127.0.0.1:\(echo.port)\r\n\r\n"
+                "GET http://127.0.0.1:9999/ HTTP/1.1\r\nHost: 127.0.0.1:9999\r\n\r\n"
         )
         #expect(response.contains("HTTP/1.1 403"))
-        #expect(response.contains("blocked IP"))
+        #expect(response.contains("blocked CIDR"))
     }
 
     @Test func plainHTTPHostHeaderFallback() async throws {
@@ -203,6 +198,75 @@ import Testing
         )
         #expect(response.contains("HTTP/1.1 403"))
         #expect(response.contains("Blocked"))
+    }
+
+    // MARK: - Adversarial: smuggling primitives at the origin
+    //
+    // These tests use a CaptureServer that records the exact bytes the proxy
+    // writes to "origin" so we can assert what an upstream parser would see.
+
+    @Test func transferEncodingNotForwardedToOrigin() async throws {
+        // hopByHopHeaders includes transfer-encoding (RFC 7230 §6.1) so the
+        // proxy can't be paired with a smaller Content-Length to produce the
+        // classic TE/CL request-smuggling primitive at the origin.
+        let capture = try await CaptureServer.start()
+        defer { capture.shutdown() }
+
+        // No CIDR blocks so 127.0.0.1 isn't rejected pre-connect.
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: [])
+
+        let body = "0\r\n\r\n"
+        let smuggled =
+            "GET http://127.0.0.1:\(capture.port)/ HTTP/1.1\r\n"
+            + "Host: 127.0.0.1:\(capture.port)\r\n"
+            + "Content-Length: \(body.utf8.count)\r\n"
+            + "Transfer-Encoding: chunked\r\n"
+            + "\r\n"
+            + body
+
+        // CaptureServer never responds, so proxySend's read will time out.
+        // We only care about what reached CaptureServer, so swallow the
+        // client-side failure.
+        _ = try? await proxySend(policy: policy, request: smuggled)
+
+        let bytes = try await capture.waitForBytes(atLeast: 1, timeout: .seconds(2))
+        let received = String(bytes: bytes, encoding: .utf8) ?? ""
+        let headerEnd = received.range(of: "\r\n\r\n")?.lowerBound ?? received.endIndex
+        let headerBlock = received[..<headerEnd].lowercased()
+        #expect(
+            !(headerBlock.contains("content-length:") && headerBlock.contains("transfer-encoding:")),
+            "Both CL and TE survived the proxy — TE/CL smuggling primitive at origin")
+    }
+
+    @Test func bareLFInHeaderNameNotForwardedToOrigin() async throws {
+        // parseRequestBytes splits on "\r\n", so a header *name* containing a
+        // bare LF (e.g. "X-Pwn\nHost") used to survive parsing and re-emit
+        // verbatim — origins tolerant of bare LF would smuggle a Host header.
+        // The parser now rejects names with control chars (malformed request).
+        let capture = try await CaptureServer.start()
+        defer { capture.shutdown() }
+
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: [])
+
+        let request =
+            "GET http://127.0.0.1:\(capture.port)/ HTTP/1.1\r\n"
+            + "Host: 127.0.0.1:\(capture.port)\r\n"
+            + "X-Pwn\nHost: smuggled.example.com: real-value\r\n"
+            + "\r\n"
+
+        // The proxy now rejects the malformed request and closes the
+        // connection without responding, so proxySend's read fails. We only
+        // care about what (if anything) reached origin.
+        _ = try? await proxySend(policy: policy, request: request)
+
+        // Either the proxy rejected the request (no bytes at origin) or it
+        // forwarded scrubbed bytes — either way the bare-LF pattern must
+        // not appear verbatim in what the origin saw.
+        let bytes = (try? await capture.waitForBytes(atLeast: 1, timeout: .seconds(1))) ?? []
+        let received = String(bytes: bytes, encoding: .utf8) ?? ""
+        #expect(!received.contains("X-Pwn\nHost: smuggled.example.com"))
     }
 
     // MARK: - Adversarial: parseAbsoluteURI edge cases
@@ -710,6 +774,97 @@ private final class EchoHandler: ChannelInboundHandler, @unchecked Sendable {
         } else {
             context.writeAndFlush(data, promise: nil)
         }
+    }
+}
+
+// MARK: - Capture server
+//
+// Like EchoServer but records every byte received without echoing. Used by
+// the smuggling-primitive tests that need to inspect what the proxy actually
+// wrote to the origin.
+
+private final class CaptureServer: @unchecked Sendable {
+    let port: Int
+    private let channel: Channel
+    private let group: MultiThreadedEventLoopGroup
+    private let recorder: ByteRecorder
+
+    private init(
+        port: Int, channel: Channel, group: MultiThreadedEventLoopGroup, recorder: ByteRecorder
+    ) {
+        self.port = port
+        self.channel = channel
+        self.group = group
+        self.recorder = recorder
+    }
+
+    static func start() async throws -> CaptureServer {
+        let group = MultiThreadedEventLoopGroup(numberOfThreads: 1)
+        let recorder = ByteRecorder()
+        let channel = try await ServerBootstrap(group: group)
+            .childChannelInitializer { channel in
+                channel.pipeline.addHandler(CaptureHandler(recorder: recorder))
+            }
+            .bind(host: "127.0.0.1", port: 0)
+            .get()
+        guard let port = channel.localAddress?.port else {
+            throw ProxyTestError.bindFailed
+        }
+        return CaptureServer(port: port, channel: channel, group: group, recorder: recorder)
+    }
+
+    func waitForBytes(atLeast: Int, timeout: Duration) async throws -> [UInt8] {
+        let deadline = ContinuousClock.now + timeout
+        while ContinuousClock.now < deadline {
+            let snapshot = recorder.snapshot()
+            if snapshot.count >= atLeast { return snapshot }
+            try await Task.sleep(for: .milliseconds(20))
+        }
+        let snapshot = recorder.snapshot()
+        if snapshot.isEmpty { throw ProxyTestError.readFailed }
+        return snapshot
+    }
+
+    func shutdown() {
+        channel.close(promise: nil)
+        try? group.syncShutdownGracefully()
+    }
+}
+
+private final class ByteRecorder: @unchecked Sendable {
+    private let lock = NSLock()
+    private var bytes: [UInt8] = []
+
+    func append(_ chunk: [UInt8]) {
+        lock.lock()
+        defer { lock.unlock() }
+        bytes.append(contentsOf: chunk)
+    }
+
+    func snapshot() -> [UInt8] {
+        lock.lock()
+        defer { lock.unlock() }
+        return bytes
+    }
+}
+
+private final class CaptureHandler: ChannelInboundHandler, @unchecked Sendable {
+    typealias InboundIn = ByteBuffer
+
+    let recorder: ByteRecorder
+
+    init(recorder: ByteRecorder) {
+        self.recorder = recorder
+    }
+
+    func channelRead(context _: ChannelHandlerContext, data: NIOAny) {
+        var buf = unwrapInboundIn(data)
+        if let bytes = buf.readBytes(length: buf.readableBytes) {
+            recorder.append(bytes)
+        }
+        // Don't echo, don't close — just record. The proxy will time out
+        // waiting for a response, which is fine since we only care about
+        // what was sent.
     }
 }
 

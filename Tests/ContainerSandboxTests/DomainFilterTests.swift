@@ -450,6 +450,62 @@ struct DomainFilterTests {
         #expect(!filter.isBlockedCIDR("::2"))
     }
 
+    // MARK: - Adversarial: control characters in hostnames
+    //
+    // Swift String permits embedded U+0000. NIO's connect-by-host flows the
+    // string into libc getaddrinfo via Swift's automatic C-string bridging,
+    // which truncates at the first NUL — so a host like "evil.com\0.example.com"
+    // would resolve as "evil.com" while the Swift filter (which sees the full
+    // string) matches a "*.example.com" allowlist via hasSuffix. Same risk
+    // applies to bare CR / LF / other CTL chars that round-trip differently
+    // through different parsers. evaluate() rejects these up front.
+
+    @Test func nulByteHostnameDoesNotMatchWildcard() {
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["*.example.com"]))
+        #expect(filter.evaluate(host: "evil.com\u{0}.example.com", port: 443) != .allow)
+    }
+
+    @Test func crLfInHostnameRejected() {
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["example.com"]))
+        #expect(filter.evaluate(host: "example.com\r\n", port: 443) != .allow)
+        #expect(filter.evaluate(host: "example.com\n", port: 443) != .allow)
+        #expect(filter.evaluate(host: "exam\rple.com", port: 443) != .allow)
+    }
+
+    @Test func delByteInHostnameRejected() {
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["example.com"]))
+        // 0x7F (DEL) is in the same control-character class.
+        #expect(filter.evaluate(host: "example.com\u{7F}", port: 443) != .allow)
+    }
+
+    // MARK: - Adversarial: pre-connect CIDR check for IP literals
+    //
+    // The post-connect resolvedBlockedIP catches DNS rebinding, but for an
+    // IP-literal target the proxy used to issue a TCP SYN before checking.
+    // That leaks an open/closed/RST signal, allowing an agent in .allow mode
+    // to scan host loopback / RFC1918 / cloud-metadata addresses. evaluate()
+    // now denies IP literals matching blockedCIDRs up front. Explicit entries
+    // in allowedHosts still win (S3 in evaluate's ordering).
+
+    @Test func allowModeDeniesIPLiteralInBlockedCIDR() {
+        let filter = DomainFilter(policy: .allow)
+        // 127/8, 10/8, 169.254/16 are all in defaultBlockedCIDRs.
+        #expect(filter.evaluate(host: "127.0.0.1", port: 22) != .allow)
+        #expect(filter.evaluate(host: "10.0.0.5", port: 22) != .allow)
+        #expect(filter.evaluate(host: "169.254.169.254", port: 80) != .allow)
+        // Public IPs still pass.
+        #expect(filter.evaluate(host: "8.8.8.8", port: 443) == .allow)
+    }
+
+    @Test func explicitAllowlistOverridesBlockedCIDR() {
+        // Putting an IP in allowedHosts is an explicit user opt-in; it must
+        // win over default-CIDR blocks (otherwise users couldn't reach a
+        // dev service at 127.0.0.1 via a deny-mode policy).
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["10.0.0.1"]))
+        #expect(filter.evaluate(host: "10.0.0.1", port: 443) == .allow)
+        #expect(filter.evaluate(host: "10.0.0.2", port: 443) != .allow)
+    }
+
     // MARK: - Post-DNS resolved-IP check (blockedHosts IPs + CIDRs)
 
     @Test func resolvedIPMatchesBlockedHostsIPv4() {

@@ -203,4 +203,100 @@ struct ProxyManagerTests {
             try await manager.startIfNeeded(name: "test", policy: .allow)
         }
     }
+
+    // MARK: - File permissions and lock-file persistence
+    //
+    // These exercise the live FileProxyStateStorage against a temp dir
+    // (rather than the FakeProxyStateStorage used elsewhere in this file)
+    // because the bug they catch is in actual filesystem syscalls.
+
+    @Test func ensureStateDirectoryCreates0o700() throws {
+        let tmp = makeTempStateDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let storage = FileProxyStateStorage(stateDir: tmp)
+
+        try storage.ensureStateDirectory(for: "test-sandbox")
+
+        #expect(modeBits(of: tmp) == 0o700)
+        #expect(modeBits(of: tmp.appendingPathComponent("test-sandbox")) == 0o700)
+    }
+
+    @Test func policyFileWrittenAt0o600() throws {
+        let tmp = makeTempStateDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let storage = FileProxyStateStorage(stateDir: tmp)
+
+        try storage.ensureStateDirectory(for: "test-sandbox")
+        let configPath = try storage.writePolicy(.deny, for: "test-sandbox")
+
+        #expect(modeBits(of: URL(fileURLWithPath: configPath)) == 0o600)
+    }
+
+    @Test func proxyStateFileWrittenAt0o600() throws {
+        let tmp = makeTempStateDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let storage = FileProxyStateStorage(stateDir: tmp)
+
+        try storage.ensureStateDirectory(for: "test-sandbox")
+        try storage.saveState(
+            ProxyState(pid: 999, socketPath: "/tmp/x.sock", sandboxName: "test-sandbox"),
+            for: "test-sandbox")
+
+        let stateFile = tmp.appendingPathComponent("test-sandbox/proxy.json")
+        #expect(modeBits(of: stateFile) == 0o600)
+    }
+
+    @Test func lockFileWrittenAt0o600() throws {
+        let tmp = makeTempStateDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let storage = FileProxyStateStorage(stateDir: tmp)
+
+        try storage.ensureStateDirectory(for: "test-sandbox")
+        let lock = try storage.acquireLock(for: "test-sandbox")
+        defer { withExtendedLifetime(lock) {} }
+
+        let lockFile = tmp.appendingPathComponent("test-sandbox/proxy.lock")
+        #expect(modeBits(of: lockFile) == 0o600)
+    }
+
+    @Test func removeRuntimeStatePreservesLockFile() throws {
+        // The lock file must survive runtime teardown so flock semantics stay
+        // path-stable across stop+start cycles for the same sandbox.
+        let tmp = makeTempStateDir()
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let storage = FileProxyStateStorage(stateDir: tmp)
+
+        try storage.ensureStateDirectory(for: "test-sandbox")
+        try storage.saveState(
+            ProxyState(pid: 999, socketPath: "/tmp/x.sock", sandboxName: "test-sandbox"),
+            for: "test-sandbox")
+        let lock = try storage.acquireLock(for: "test-sandbox")
+        defer { withExtendedLifetime(lock) {} }
+        let logFile = tmp.appendingPathComponent("test-sandbox/proxy.log")
+        FileManager.default.createFile(atPath: logFile.path, contents: nil)
+
+        let stateFile = tmp.appendingPathComponent("test-sandbox/proxy.json")
+        let lockFile = tmp.appendingPathComponent("test-sandbox/proxy.lock")
+
+        storage.removeRuntimeState(for: "test-sandbox")
+
+        #expect(!FileManager.default.fileExists(atPath: stateFile.path))
+        #expect(!FileManager.default.fileExists(atPath: logFile.path))
+        #expect(FileManager.default.fileExists(atPath: lockFile.path))
+    }
+}
+
+// MARK: - Test helpers (file-perm assertions)
+
+private func makeTempStateDir() -> URL {
+    let base = URL(
+        fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp",
+        isDirectory: true)
+    return base.appendingPathComponent("state-perms-\(UUID().uuidString)", isDirectory: true)
+}
+
+private func modeBits(of url: URL) -> mode_t {
+    var st = stat()
+    guard stat(url.path, &st) == 0 else { return 0 }
+    return st.st_mode & 0o777
 }

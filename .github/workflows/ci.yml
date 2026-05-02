@@ -20,7 +20,10 @@ jobs:
     timeout-minutes: 30
 
     steps:
-      - uses: actions/checkout@v5
+      # Actions are pinned to commit SHAs (not floating major tags) so a
+      # malicious patch release of a third-party action can't run with this
+      # workflow's permissions. Update via Dependabot (grouped by `actions`).
+      - uses: actions/checkout@93cb6efe18208431cddfb8368fd83d5badbf9bfd # v5.0.1
 
       - name: Show toolchain
         id: toolchain
@@ -35,7 +38,7 @@ jobs:
       # SwiftPM artifact bundles (uv, gRPC plugins, etc.) — these survive
       # Package.resolved changes, so cache them separately and aggressively.
       - name: Cache SwiftPM artifacts
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: |
             ~/Library/Caches/org.swift.swiftpm
@@ -48,7 +51,7 @@ jobs:
       # Package.resolved so a dep bump rebuilds; same Xcode build required
       # so module formats line up.
       - name: Cache .build
-        uses: actions/cache@v4
+        uses: actions/cache@0057852bfaa89a56745cba8c7296529d2fc39830 # v4.3.0
         with:
           path: .build
           key: spm-build-${{ runner.os }}-${{ steps.toolchain.outputs.xcode_build }}-${{ hashFiles('**/Package.resolved') }}-${{ hashFiles('Package.swift') }}

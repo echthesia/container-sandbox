@@ -212,4 +212,35 @@ struct SessionTrackerIntegrationTests {
         let wasLast = tracker.remove(sessionId: s, for: containerId)
         #expect(wasLast)
     }
+
+    // MARK: - File permissions
+
+    @Test func sessionFileWrittenAt0o600() throws {
+        // Session files contain PIDs (not secret) but live alongside policy
+        // and proxy state — the whole tree should be 0o700 / 0o600 so a
+        // multi-user host can't see which sandboxes a user has running.
+        let tmp = URL(
+            fileURLWithPath: ProcessInfo.processInfo.environment["TMPDIR"] ?? "/tmp",
+            isDirectory: true
+        ).appendingPathComponent("session-perms-\(UUID().uuidString)", isDirectory: true)
+        defer { try? FileManager.default.removeItem(at: tmp) }
+        let storage = FileSessionStorage(baseDir: tmp)
+
+        try storage.createSession(containerId: "test", sessionId: "abc", pid: 1234)
+
+        let sessionFile = tmp.appendingPathComponent("test/sessions/abc")
+        #expect(fileMode(of: sessionFile) == 0o600)
+        #expect(fileMode(of: sessionFile.deletingLastPathComponent()) == 0o700)
+        #expect(
+            fileMode(of: sessionFile.deletingLastPathComponent().deletingLastPathComponent())
+                == 0o700)
+    }
+}
+
+// MARK: - Test helpers
+
+private func fileMode(of url: URL) -> mode_t {
+    var st = stat()
+    guard stat(url.path, &st) == 0 else { return 0 }
+    return st.st_mode & 0o777
 }
