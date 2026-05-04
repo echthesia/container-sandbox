@@ -14,24 +14,16 @@ Each sandbox is a Linux VM with the agent installed, a per-sandbox HTTP/SOCKS5 p
 
 - macOS 26 or later (Apple Silicon)
 - [Apple Container](https://github.com/apple/container) ≥ 0.11.0, installed via Homebrew (`brew install container`)
-- Xcode 26 / Swift 6.2 toolchain
-- Go 1.23+ (only needed to cross-compile the in-container helpers under `init-image/`; `make install` runs this for you)
-
-For development:
-
-- `swift format` — bundled with the Swift 6 toolchain, no separate install. Config (`.swift-format`) matches upstream apple/container. `make verify` runs `swift format lint --strict` + tests; `make format` applies in place. The post-write hook in `.claude/settings.json` auto-formats Swift files on edit.
 
 ## Install
 
 ```sh
-git clone <this repo>
-cd ac-agent-sandbox
-make install
+brew install echthesia/container-sandbox/container-sandbox
 ```
 
-This builds the Swift CLI in release mode, codesigns it, cross-compiles the Linux init helpers, and symlinks `$(brew --prefix container)/libexec/container-plugins/sandbox` to a stable location under `~/.local/lib/container-sandbox/`. After install, `container sandbox --help` should work.
+This drops a codesigned, notarized release binary plus the Linux init helpers into a stable location and links them into Apple Container's plugin directory. After install, `container sandbox --help` should work.
 
-To remove: `make uninstall`.
+To upgrade later: `brew upgrade container-sandbox`. To remove: `brew uninstall container-sandbox`.
 
 ## Usage
 
@@ -84,6 +76,20 @@ Every agent template runs its CLI with the equivalent of "skip all permission pr
 This is a sandbox, not an air gap. An agent inside can still consume API quota, push to git remotes you've passed credentials for, and reach any host you've allowlisted. Treat the network policy as the security control.
 
 ## Development
+
+To install from source instead of via Homebrew:
+
+```sh
+git clone <this repo>
+cd ac-agent-sandbox
+make install
+```
+
+This builds the Swift CLI in release mode, ad-hoc codesigns it, cross-compiles the Linux init helpers, and symlinks `$(brew --prefix container)/libexec/container-plugins/sandbox` to a stable location under `~/.local/lib/container-sandbox/`. Requires Xcode 26 / Swift 6.2 and Go 1.23+ (Go is only used to cross-compile the helpers under `init-image/`).
+
+To remove a source install: `make uninstall`. A `brew install` and a `make install` write to the same plugin slot, so swap with `make uninstall && brew install ...` or vice versa.
+
+`swift format` is bundled with the Swift 6 toolchain — no separate install. Config (`.swift-format`) matches upstream apple/container. The post-write hook in `.claude/settings.json` auto-formats Swift files on edit.
 
 ```sh
 make build        # release build of the Swift CLI
