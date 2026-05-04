@@ -140,10 +140,18 @@ jobs:
             echo "Release $VERSION already exists; refusing to overwrite." >&2
             exit 1
           fi
+          # Tags containing '-' (e.g. v0.1.0-rc1) are prereleases. Mirrors
+          # the tap-bump skip below so the GitHub UI also stops calling them
+          # the latest stable.
+          PRERELEASE_FLAG=""
+          if [[ "$VERSION" == *-* ]]; then
+            PRERELEASE_FLAG="--prerelease"
+          fi
           gh release create "$VERSION" \
             dist/*.tar.gz dist/*.tar.gz.sha256 \
             --title "$VERSION" \
-            --generate-notes
+            --generate-notes \
+            $PRERELEASE_FLAG
 
       # Bump the Homebrew tap formula in echthesia/homebrew-container-sandbox.
       # Skipped for pre-releases (any tag containing '-', e.g. v0.2.0-rc1) so
