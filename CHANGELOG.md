@@ -7,7 +7,7 @@ project intends to follow [SemVer](https://semver.org) once it stabilizes;
 
 ## [Unreleased]
 
-## [0.1.0] — TBD
+## [0.1.0] — 2026-05-03
 
 First public release. Run AI coding agents inside isolated microVM
 sandboxes via the `container sandbox` subcommand.
