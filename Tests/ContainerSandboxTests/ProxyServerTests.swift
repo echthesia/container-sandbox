@@ -239,6 +239,122 @@ import Testing
             "Both CL and TE survived the proxy — TE/CL smuggling primitive at origin")
     }
 
+    @Test func duplicateContentLengthRejected() async throws {
+        // Two distinct Content-Length headers is the canonical CL-CL smuggling
+        // primitive at the origin (RFC 7230 §3.3.3 says intermediaries SHOULD
+        // reject). The proxy injects Connection: close which defuses
+        // same-connection desync, but we don't forward a CL we can't trust.
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: [])
+        let request =
+            "POST http://allowed.example.com/ HTTP/1.1\r\n"
+            + "Host: allowed.example.com\r\n"
+            + "Content-Length: 5\r\n"
+            + "Content-Length: 6\r\n"
+            + "\r\n"
+            + "hello!"
+        // The proxy rejects the request and closes the connection without
+        // responding (parseRequestBytes throws). proxySend's read returns
+        // empty in that case, so swallow the read failure.
+        let response = (try? await proxySend(policy: policy, request: request)) ?? ""
+        // Whatever happens, the request must not have been forwarded (no 200
+        // from origin) and the proxy's domain filter must not have been the
+        // gate (no 403 since the host is allowed).
+        #expect(!response.contains("HTTP/1.1 200"))
+        #expect(!response.contains("HTTP/1.1 403"))
+    }
+
+    @Test func nonNumericContentLengthRejected() async throws {
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: [])
+        let request =
+            "POST http://allowed.example.com/ HTTP/1.1\r\n"
+            + "Host: allowed.example.com\r\n"
+            + "Content-Length: 5, 6\r\n"
+            + "\r\n"
+            + "hello"
+        let response = (try? await proxySend(policy: policy, request: request)) ?? ""
+        #expect(!response.contains("HTTP/1.1 200"))
+        #expect(!response.contains("HTTP/1.1 403"))
+    }
+
+    @Test func duplicateHostHeaderRejected() async throws {
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: [])
+        let request =
+            "GET http://allowed.example.com/ HTTP/1.1\r\n"
+            + "Host: allowed.example.com\r\n"
+            + "Host: smuggled.example.com\r\n"
+            + "\r\n"
+        let response = (try? await proxySend(policy: policy, request: request)) ?? ""
+        #expect(!response.contains("HTTP/1.1 200"))
+    }
+
+    @Test func connectionTokenHopHeadersStrippedAtOrigin() async throws {
+        // RFC 7230 §6.1: a header named in `Connection: token` is hop-by-hop
+        // and must not be forwarded. Without this, an attacker could declare
+        // a header connection-scoped (so semantically benign) while still
+        // forwarding it verbatim to the origin — useful as a header-smuggling
+        // primitive against origins that don't strip these themselves.
+        let capture = try await CaptureServer.start()
+        defer { capture.shutdown() }
+
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: [])
+
+        let request =
+            "GET http://127.0.0.1:\(capture.port)/ HTTP/1.1\r\n"
+            + "Host: 127.0.0.1:\(capture.port)\r\n"
+            + "Connection: X-Smuggled-Auth\r\n"
+            + "X-Smuggled-Auth: token123\r\n"
+            + "\r\n"
+
+        _ = try? await proxySend(policy: policy, request: request)
+
+        let bytes = (try? await capture.waitForBytes(atLeast: 1, timeout: .seconds(1))) ?? []
+        let received = String(bytes: bytes, encoding: .utf8) ?? ""
+        #expect(
+            !received.lowercased().contains("x-smuggled-auth: token123"),
+            "Header named in Connection: should not have reached origin. Got: \(received.prefix(300))")
+    }
+
+    @Test func malformedPortInConnectReturns400() async throws {
+        // 99999 is out of range. Without the malformed flag, the proxy used
+        // to silently coerce to default 443 — letting an attacker write a
+        // syntactically broken port to bypass any future port-scoped rule.
+        let response = try await proxyConnect(
+            policy: .allow,
+            target: "good.example.com:99999"
+        )
+        #expect(response.contains("HTTP/1.1 400"))
+        #expect(!response.contains("HTTP/1.1 502"))
+    }
+
+    @Test func malformedPortInHostHeaderReturns400() async throws {
+        let response = try await proxySend(
+            policy: NetworkPolicy(
+                direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: []),
+            request: "GET /path HTTP/1.1\r\nHost: example.com:99999\r\n\r\n"
+        )
+        #expect(response.contains("HTTP/1.1 400"))
+    }
+
+    @Test func headerLineWithoutColonRejected() async throws {
+        // A header line missing ':' was previously silently skipped — the
+        // request continued forwarding without that line, but a more
+        // permissive origin parser might treat it as data and create a
+        // request-splitting opportunity. Now: 400 / drop.
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: [])
+        let request =
+            "GET http://allowed.example.com/ HTTP/1.1\r\n"
+            + "Host: allowed.example.com\r\n"
+            + "BareToken\r\n"
+            + "\r\n"
+        let response = (try? await proxySend(policy: policy, request: request)) ?? ""
+        #expect(!response.contains("HTTP/1.1 200"))
+    }
+
     @Test func bareLFInHeaderNameNotForwardedToOrigin() async throws {
         // parseRequestBytes splits on "\r\n", so a header *name* containing a
         // bare LF (e.g. "X-Pwn\nHost") used to survive parsing and re-emit
@@ -406,6 +522,69 @@ import Testing
         #expect(response[1] == 0x00)  // no auth
         #expect(response[2] == 0x05)  // request version
         #expect(response[3] == 0x02)  // connection not allowed
+    }
+
+    @Test func socks5NonZeroReservedByteRejected() async throws {
+        // RFC 1928 §4: RSV byte MUST be 0x00. Strict here so a non-zero byte
+        // can't be repurposed as a covert side-channel marker between agent
+        // and an upstream that decides to look at it.
+        let socketPath = "/tmp/tp-\(UUID().uuidString).sock"
+        let server = ProxyServer(socketPath: socketPath, filter: DomainFilter(policy: .allow))
+        let serverTask = Task { try await server.run() }
+        defer {
+            serverTask.cancel()
+            unlink(socketPath)
+        }
+        try await waitForSocket(socketPath)
+
+        let response = try await Task.detached {
+            let fd = try connectToUDS(socketPath)
+            defer { close(fd) }
+            setReadTimeout(fd, seconds: 3)
+
+            // Greeting then request with RSV = 0xFF.
+            var data: [UInt8] = [0x05, 0x01, 0x00]
+            data += [0x05, 0x01, 0xFF, 0x01, 8, 8, 8, 8, 0x01, 0xBB]
+            data.withUnsafeBufferPointer { ptr in
+                guard let base = ptr.baseAddress else { return }
+                _ = Darwin.write(fd, base, data.count)
+            }
+            return try readAllBytes(fd)
+        }.value
+
+        // Greeting reply [0x05, 0x00] then error reply [0x05, 0x01, ...]
+        #expect(response.count >= 4)
+        #expect(response[2] == 0x05)
+        #expect(response[3] == 0x01)  // general failure
+    }
+
+    @Test func plainHTTPForwardCanonicalizesHostHeader() async throws {
+        // The proxy must not forward the inbound Host header verbatim — it
+        // routes by the URI authority, so the origin must see a Host that
+        // matches the routing decision. Otherwise an attacker writes
+        // `GET http://allowed/ HTTP/1.1\r\nHost: smuggled` and origins doing
+        // virtual-hosting see the smuggled name.
+        let capture = try await CaptureServer.start()
+        defer { capture.shutdown() }
+
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [], blockedHosts: [], blockedCIDRs: [])
+
+        let request =
+            "GET http://127.0.0.1:\(capture.port)/path HTTP/1.1\r\n"
+            + "Host: smuggled.example.com\r\n"
+            + "\r\n"
+
+        _ = try? await proxySend(policy: policy, request: request)
+
+        let bytes = (try? await capture.waitForBytes(atLeast: 1, timeout: .seconds(1))) ?? []
+        let received = String(bytes: bytes, encoding: .utf8) ?? ""
+        #expect(
+            received.contains("Host: 127.0.0.1:\(capture.port)"),
+            "Origin must see a Host that matches the URI authority. Got: \(received.prefix(300))")
+        #expect(
+            !received.contains("smuggled.example.com"),
+            "Inbound Host must not survive forwarding")
     }
 
     @Test func socks5InvalidVersionRejected() async throws {

@@ -88,12 +88,21 @@ struct DomainFilter {
     /// `blockedCIDRs` rule. The upfront `evaluate` call already covers IP
     /// literals supplied as the request target; this catches the DNS-rebinding
     /// case where a hostname resolves to an IP we want to block.
+    ///
+    /// An explicit `allowedHosts` IP entry short-circuits to false even if
+    /// the address lies in a default-blocked CIDR. `evaluate` honors the same
+    /// contract (line 47); without the short-circuit here, the post-DNS layer
+    /// would silently override the user's explicit opt-in (e.g. allowing
+    /// `10.0.0.1` would still 403 because `10/8` is in default blockedCIDRs).
     func isBlockedResolvedIP(_ ip: String, port: Int) -> Bool {
+        let resolved = Self.resolveHost(ip)
+        if matchesHost(resolved, port: port, in: allowed) {
+            return false
+        }
         // blockedHosts may contain IP entries (parsed into blocked.ipv4s/ipv6s
         // at init time). Reuse the existing host-matching path so IPv4-mapped
         // IPv6 normalization and port-scoped entries behave the same as in
         // the upfront evaluate() call.
-        let resolved = Self.resolveHost(ip)
         if matchesHost(resolved, port: port, in: blocked) {
             return true
         }
@@ -136,12 +145,24 @@ struct DomainFilter {
 
 extension DomainFilter {
     /// Canonicalize a host or host-pattern: trim whitespace, lowercase,
-    /// strip trailing dots. Two strings that differ only in these respects
-    /// must compare equal so policy matching and policy equality agree.
+    /// strip trailing dots, strip IPv6 zone-IDs. Two strings that differ only
+    /// in these respects must compare equal so policy matching and policy
+    /// equality agree.
+    ///
+    /// Zone IDs (`fe80::1%eth0`, RFC 4007 §11.2) are stripped because
+    /// `inet_pton` rejects them — without stripping, a zoned IPv6 host slips
+    /// past the pre-connect CIDR check (the post-DNS check via `getpeername`
+    /// still catches it, but we don't want to issue a SYN first).
     static func normalizeHostPattern(_ raw: String) -> String {
         var h = raw.trimmingCharacters(in: .whitespaces).lowercased()
         while h.hasSuffix(".") {
             h = String(h.dropLast())
+        }
+        // Only strip `%zone` for IPv6-shaped strings — `%` is invalid in DNS
+        // hostnames anyway, but the `:` guard keeps a hypothetical odd
+        // domain-name input from being silently truncated.
+        if h.contains(":"), let pct = h.firstIndex(of: "%") {
+            h = String(h[..<pct])
         }
         return h
     }
@@ -165,7 +186,15 @@ extension DomainFilter {
         var result = ParsedHosts.empty
         for rawPattern in patterns {
             let pattern = normalizeHostPattern(rawPattern)
-            let (host, port) = parseHostPort(pattern)
+            let (rawHost, port, _) = parseHostPort(pattern)
+            // Re-normalize the host portion. The pre-parse normalizeHostPattern
+            // runs on the full string, so a pattern like "evil.com.:443" leaves
+            // a trailing dot on the host portion (the suffix is ":443", no dot
+            // to strip). At match time the request host is dot-stripped, so
+            // "evil.com." would never compare equal to "evil.com" — silently
+            // making the pattern inert. Same shape applies to bracketed
+            // "[host.]:443" and to IPv6 zone IDs ("fe80::1%eth0").
+            let host = normalizeHostPattern(rawHost)
 
             // Try IPv4
             var sa4 = in_addr()
@@ -255,7 +284,16 @@ extension DomainFilter {
             // Wildcard match: *.example.com matches foo.example.com and bar.foo.example.com.
             if entry.pattern.hasPrefix("*.") {
                 let suffix = String(entry.pattern.dropFirst(1))  // ".example.com"
-                if host.hasSuffix(suffix) && host != String(suffix.dropFirst()) {
+                guard host.hasSuffix(suffix), host != String(suffix.dropFirst()) else {
+                    continue
+                }
+                // Require a non-empty label to replace `*`. Without this guard
+                // "..example.com" matches `*.example.com` (suffix matches; the
+                // base-domain guard above is bypassed because the strings
+                // differ) — and ".example.com" would too. Both are malformed
+                // names and shouldn't traverse the wildcard.
+                let prefixLength = host.count - suffix.count
+                if prefixLength > 0, !host.hasPrefix(".") {
                     return true
                 }
             }

@@ -22,17 +22,37 @@ struct NetworkPolicy: Codable {
         "platform.claude.com:443",
     ]
 
-    /// Default blocked CIDRs — host-side private networks and localhost.
-    /// Container-internal localhost (127.0.0.1 inside the VM) is unaffected.
+    /// Default blocked CIDRs — host-side private networks, loopback, link-local,
+    /// and reserved/multicast/broadcast space. Container-internal localhost
+    /// (127.0.0.1 inside the VM) is unaffected.
+    ///
+    /// CGNAT (`100.64.0.0/10`, RFC 6598) is intentionally NOT in this list:
+    /// Tailscale's default tailnet lives there, and many users want their
+    /// agents to reach tailscale-exposed dev services. Operators who want
+    /// CGNAT blocked can add it to `blockedCIDRs` explicitly.
     static let defaultBlockedCIDRs: [NormalizedCIDR] = [
+        // RFC 1918 private space.
         "10.0.0.0/8",
         "172.16.0.0/12",
         "192.168.0.0/16",
+        // Loopback.
         "127.0.0.0/8",
+        // Link-local (covers cloud metadata service at 169.254.169.254).
         "169.254.0.0/16",
+        // "This network" / source-only — never a valid destination, but some
+        // stacks accept it; keeping it out of reach closes a side channel.
+        "0.0.0.0/8",
+        // IPv4 multicast (RFC 5771) — not a unicast destination.
+        "224.0.0.0/4",
+        // IPv4 reserved / limited-broadcast space (240.0.0.0/4 includes
+        // 255.255.255.255). Treated as non-routable for our purposes.
+        "240.0.0.0/4",
+        // IPv6 loopback, unique-local (fc00::/7), and link-local (fe80::/10).
         "::1/128",
         "fc00::/7",
         "fe80::/10",
+        // IPv6 multicast (ff00::/8) — RFC 4291.
+        "ff00::/8",
     ].map(literalCIDR)
 
     /// Helper for module-internal hardcoded CIDR literals. A nil result here

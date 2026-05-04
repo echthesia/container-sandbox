@@ -140,14 +140,25 @@ final class ProxyServer: Sendable {
         channel: Channel
     ) async throws {
         let target = request.uri
-        let (host, port) = parseConnectTarget(target)
+        // Strip userinfo before logging (`bob:s3cret@host:443` would otherwise
+        // land in proxy.log). Logged form is also what evaluate() sees.
+        let logTarget = scrubUserinfo(target)
+        guard let (host, port) = parseConnectTarget(target) else {
+            proxyLog.info("DENY CONNECT \(logTarget): malformed target")
+            try await writeHTTPResponse(
+                outbound, allocator: channel.allocator,
+                status: 400, reason: "Bad Request",
+                body: "Malformed CONNECT target\n"
+            )
+            return
+        }
 
         let decision = filter.evaluate(host: host, port: port)
         switch decision {
         case .allow:
-            proxyLog.info("ALLOW CONNECT \(target)")
+            proxyLog.info("ALLOW CONNECT \(logTarget)")
         case .deny(let reason):
-            proxyLog.info("DENY CONNECT \(target): \(reason)")
+            proxyLog.info("DENY CONNECT \(logTarget): \(reason)")
             try await writeHTTPResponse(
                 outbound, allocator: channel.allocator,
                 status: 403, reason: "Forbidden", body: "Blocked: \(reason)\n"
@@ -212,16 +223,40 @@ final class ProxyServer: Sendable {
         let host: String
         let port: Int
         let path: String
+        // The authority we'll write into the rewritten Host header so the
+        // origin sees a single Host that matches the routing decision —
+        // multiple Host headers in the inbound request must not survive.
+        let canonicalHostHeader: String
 
         if let components = parseAbsoluteURI(request.uri) {
+            if components.malformedPort {
+                try await writeHTTPResponse(
+                    outbound, allocator: channel.allocator,
+                    status: 400, reason: "Bad Request", body: "Malformed port in URI\n"
+                )
+                return
+            }
             host = components.host
             port = components.port ?? 80
             path = components.path
+            if let explicitPort = components.port {
+                canonicalHostHeader = "\(host):\(explicitPort)"
+            } else {
+                canonicalHostHeader = host
+            }
         } else if let hostHeader = request.header("host") {
             let parsed = parseHostPort(hostHeader)
+            if parsed.malformed {
+                try await writeHTTPResponse(
+                    outbound, allocator: channel.allocator,
+                    status: 400, reason: "Bad Request", body: "Malformed port in Host header\n"
+                )
+                return
+            }
             host = parsed.host
             port = parsed.port ?? 80
             path = request.uri.isEmpty ? "/" : request.uri
+            canonicalHostHeader = hostHeader
         } else {
             try await writeHTTPResponse(
                 outbound, allocator: channel.allocator,
@@ -273,11 +308,34 @@ final class ProxyServer: Sendable {
             return
         }
 
+        // Headers named in `Connection: token, token` are also hop-by-hop
+        // (RFC 7230 §6.1) and must be dropped before forwarding. Without this,
+        // a request like `Connection: X-Smuggle\r\nX-Smuggle: ...` would
+        // forward `X-Smuggle` to origin while semantically declaring it
+        // connection-scoped — useful as a header-smuggling primitive against
+        // origins that don't strip these themselves.
+        var perRequestHopHeaders: Set<String> = []
+        for (name, value) in request.headers where name.lowercased() == "connection" {
+            for token in value.split(separator: ",") {
+                let trimmed = token.trimmingCharacters(in: .whitespaces).lowercased()
+                if !trimmed.isEmpty, trimmed != "close", trimmed != "keep-alive" {
+                    perRequestHopHeaders.insert(trimmed)
+                }
+            }
+        }
+
         // Rewrite the request in origin-form and send to remote.
         var initialToRemote = channel.allocator.buffer(capacity: 512 + overflow.readableBytes)
         initialToRemote.writeString("\(request.method) \(path) \(request.version)\r\n")
         for (name, value) in request.headers {
-            if hopByHopHeaders.contains(name.lowercased()) { continue }
+            let lowerName = name.lowercased()
+            if hopByHopHeaders.contains(lowerName) { continue }
+            if perRequestHopHeaders.contains(lowerName) { continue }
+            // Drop inbound Host headers — we emit our own canonical Host
+            // matching the routing decision so a request with conflicting
+            // or duplicate Host headers can't cause vhost confusion at the
+            // origin.
+            if lowerName == "host" { continue }
             // Sanitize to prevent header injection via embedded CRLF.
             if value.contains("\r") || value.contains("\n") {
                 let sanitized = value.replacingOccurrences(of: "\r", with: "")
@@ -287,6 +345,7 @@ final class ProxyServer: Sendable {
                 initialToRemote.writeString("\(name): \(value)\r\n")
             }
         }
+        initialToRemote.writeString("Host: \(canonicalHostHeader)\r\n")
         initialToRemote.writeString("Connection: close\r\n\r\n")
         if overflow.readableBytes > 0 {
             initialToRemote.writeImmutableBuffer(overflow)
@@ -340,11 +399,19 @@ final class ProxyServer: Sendable {
 
         guard let reqVersion = buffer.getInteger(at: reqBase, as: UInt8.self),
             let cmd = buffer.getInteger(at: reqBase + 1, as: UInt8.self),
-            // byte at reqBase+2 is reserved
+            let rsv = buffer.getInteger(at: reqBase + 2, as: UInt8.self),
             let atyp = buffer.getInteger(at: reqBase + 3, as: UInt8.self)
         else { return }
 
         guard reqVersion == 0x05 else {
+            try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
+            return
+        }
+
+        // RFC 1928 §4: RSV MUST be 0x00. Strict here so a non-zero byte can't
+        // be repurposed as a covert side-channel marker between agent and
+        // an upstream that decides to look at it.
+        guard rsv == 0x00 else {
             try await writeSocks5Reply(outbound, allocator: channel.allocator, reply: .generalFailure)
             return
         }
@@ -543,8 +610,22 @@ final class ProxyServer: Sendable {
         try await outbound.write(buf)
     }
 
-    private func parseConnectTarget(_ target: String) -> (host: String, port: Int) {
-        let (host, port) = parseHostPort(target)
+    /// Parse a CONNECT request-target into host + port. Returns nil if the
+    /// port is syntactically broken (out of range, non-numeric); callers must
+    /// reject those with a 400 rather than silently coercing to the default
+    /// 443 — otherwise an agent could write `target:99999` to bypass any
+    /// future port-scoped policy rule.
+    private func parseConnectTarget(_ target: String) -> (host: String, port: Int)? {
+        // Strip userinfo per RFC 3986 §3.2 before parsing host:port so an
+        // input like `bob:s3cret@host:443` doesn't get treated as bare IPv6.
+        let trimmed: String
+        if let atIndex = target.lastIndex(of: "@") {
+            trimmed = String(target[target.index(after: atIndex)...])
+        } else {
+            trimmed = target
+        }
+        let (host, port, malformed) = parseHostPort(trimmed)
+        if malformed { return nil }
         return (host, port ?? 443)
     }
 
@@ -552,8 +633,7 @@ final class ProxyServer: Sendable {
     /// Per RFC 3986 §3.2, authority = [userinfo "@"] host [":" port] — strip
     /// userinfo before parsing host:port so URIs like "http://user:pass@host/"
     /// don't cause the entire "user:pass@host" to be treated as the hostname.
-    // swiftlint:disable:next large_tuple
-    private func parseAbsoluteURI(_ uri: String) -> (host: String, port: Int?, path: String)? {
+    private func parseAbsoluteURI(_ uri: String) -> AbsoluteURIComponents? {
         guard uri.lowercased().hasPrefix("http://") else { return nil }
         let withoutScheme = String(uri.dropFirst("http://".count))
         let slashIndex = withoutScheme.firstIndex(of: "/") ?? withoutScheme.endIndex
@@ -564,9 +644,9 @@ final class ProxyServer: Sendable {
         if let atIndex = authority.lastIndex(of: "@") {
             authority = String(authority[authority.index(after: atIndex)...])
         }
-        let (host, port) = parseHostPort(authority)
+        let (host, port, malformed) = parseHostPort(authority)
         guard !host.isEmpty else { return nil }
-        return (host, port, path)
+        return AbsoluteURIComponents(host: host, port: port, path: path, malformedPort: malformed)
     }
 
     // MARK: - SOCKS5 Helpers
@@ -674,9 +754,16 @@ private func parseRequestBytes(_ buffer: ByteBuffer) throws -> HTTPRequest {
 
     // Headers
     var headers: [(name: String, value: String)] = []
+    var contentLengthCount = 0
+    var hostCount = 0
     for line in lines {
         if line.isEmpty { break }
-        guard let colonIndex = line.firstIndex(of: ":") else { continue }
+        // RFC 7230 §3.2: every header line must contain ':'. A line without
+        // one is a syntax error — silently skipping it lets a malformed
+        // request reach origin where it might be parsed differently.
+        guard let colonIndex = line.firstIndex(of: ":") else {
+            throw ProxyError.malformedRequest
+        }
         let name = String(line[line.startIndex..<colonIndex]).trimmingCharacters(in: .whitespaces)
         let value = String(line[line.index(after: colonIndex)...]).trimmingCharacters(
             in: .whitespaces
@@ -688,6 +775,31 @@ private func parseRequestBytes(_ buffer: ByteBuffer) throws -> HTTPRequest {
         // (request-splitting at the origin).
         guard !name.isEmpty, !DomainFilter.hasControlCharacters(name) else {
             throw ProxyError.malformedRequest
+        }
+        let lowerName = name.lowercased()
+        if lowerName == "content-length" {
+            contentLengthCount += 1
+            // RFC 7230 §3.3.3: a CL with multiple comma-separated values, a
+            // non-digit value, or two distinct CL headers is the smuggling
+            // primitive at the origin. The proxy injects `Connection: close`
+            // which defuses same-connection desync, but defense-in-depth: a
+            // CL we can't trust is one we don't forward.
+            if contentLengthCount > 1 {
+                throw ProxyError.malformedRequest
+            }
+            let digitsOnly = value.allSatisfy { $0.isASCII && $0.isNumber }
+            if value.isEmpty || !digitsOnly {
+                throw ProxyError.malformedRequest
+            }
+        }
+        if lowerName == "host" {
+            hostCount += 1
+            // Multiple Host headers create vhost-routing ambiguity at the
+            // origin. We rewrite Host on forward (handleHTTPForward) but a
+            // malformed CONNECT might still reach this path in the wild.
+            if hostCount > 1 {
+                throw ProxyError.malformedRequest
+            }
         }
         headers.append((name: name, value: value))
     }
@@ -748,6 +860,25 @@ private func formatIPv6(_ bytes: [UInt8]) -> String? {
 private func scrubQuery(_ path: String) -> String {
     guard let q = path.firstIndex(of: "?") else { return path }
     return String(path[..<q]) + "?<scrubbed>"
+}
+
+// MARK: - Userinfo scrubbing
+
+/// Strip `user:pass@` from a CONNECT request-target so credentials don't
+/// land in the proxy log. Logs are mode 0600, but defense-in-depth — a
+/// token that's never written can't leak.
+private func scrubUserinfo(_ target: String) -> String {
+    guard let at = target.lastIndex(of: "@") else { return target }
+    return "<scrubbed>@" + target[target.index(after: at)...]
+}
+
+// MARK: - URI components
+
+private struct AbsoluteURIComponents {
+    let host: String
+    let port: Int?
+    let path: String
+    let malformedPort: Bool
 }
 
 // MARK: - Shared post-DNS IP Check

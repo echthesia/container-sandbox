@@ -282,11 +282,20 @@ struct DomainFilterTests {
         #expect(filter.evaluate(host: "anything.com", port: 443) != .allow)
     }
 
-    @Test func doubleDotSubdomain() {
-        // "..example.com" is a malformed subdomain
+    @Test func doubleDotSubdomainRejected() {
+        // "..example.com" is a malformed subdomain (empty label between
+        // the two dots). hasSuffix(".example.com") matches mechanically,
+        // but the label-presence guard rejects empty/leading-dot prefixes.
         let filter = DomainFilter(policy: .deny(allowedHosts: ["*.example.com"]))
-        // hasSuffix(".example.com") is true for "..example.com"
-        #expect(filter.evaluate(host: "..example.com", port: 443) == .allow)
+        #expect(filter.evaluate(host: "..example.com", port: 443) != .allow)
+    }
+
+    @Test func leadingDotSubdomainRejected() {
+        // ".example.com" — the wildcard's base-domain guard catches the
+        // exact base, but a single leading dot needs the label-presence
+        // guard to reject.
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["*.example.com"]))
+        #expect(filter.evaluate(host: ".example.com", port: 443) != .allow)
     }
 
     @Test func emptyHostEvaluation() {
@@ -554,6 +563,109 @@ struct DomainFilterTests {
         let filter = DomainFilter(policy: .deny)
         #expect(filter.isBlockedResolvedIP("10.0.0.1", port: 443))
         #expect(!filter.isBlockedResolvedIP("8.8.8.8", port: 443))
+    }
+
+    // MARK: - B-1: explicit allowlist IP overrides post-DNS CIDR check
+
+    @Test func explicitAllowlistIPSurvivesPostDNSCheck() {
+        // 10.0.0.1 lies in default-blocked 10/8, but an explicit allowedHosts
+        // entry is the user's opt-in — the post-DNS layer must honor it just
+        // like upfront evaluate() does. Otherwise the policy's documented
+        // behavior is silently broken: evaluate() says allow, then the
+        // post-DNS recheck says deny on the same address.
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["10.0.0.1"]))
+        #expect(!filter.isBlockedResolvedIP("10.0.0.1", port: 443))
+        // A different address in the same CIDR is still blocked.
+        #expect(filter.isBlockedResolvedIP("10.0.0.2", port: 443))
+    }
+
+    @Test func explicitAllowlistIPv6SurvivesPostDNSCheck() {
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["::1"]))
+        #expect(!filter.isBlockedResolvedIP("::1", port: 443))
+        // Other addresses in ::1/128 don't exist (it's a /128); use a fc00::
+        // address to test that other blocked CIDRs still bite.
+        #expect(filter.isBlockedResolvedIP("fc00::1", port: 443))
+    }
+
+    @Test func explicitAllowlistRespectsPort() {
+        // Allowlist is port-scoped: 10.0.0.1:443 only overrides on port 443.
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["10.0.0.1:443"]))
+        #expect(!filter.isBlockedResolvedIP("10.0.0.1", port: 443))
+        #expect(filter.isBlockedResolvedIP("10.0.0.1", port: 80))
+    }
+
+    // MARK: - B-2: trailing-dot host with :port pattern
+
+    @Test func trailingDotHostWithPortBlocksMatchingHost() {
+        // "evil.com.:443" was silently inert: parseHostPort split before
+        // re-normalization, so the host portion kept its trailing dot and
+        // never compared equal to the request's normalized "evil.com".
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["evil.com.:443"], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(filter.evaluate(host: "evil.com", port: 443) != .allow)
+        #expect(filter.evaluate(host: "evil.com.", port: 443) != .allow)
+    }
+
+    @Test func trailingDotBracketedIPv6PatternMatches() {
+        // "[fe80::1.]:443" same shape: bracketed IPv6 with a trailing dot.
+        let policy = NetworkPolicy(
+            direction: .allow, allowedHosts: [],
+            blockedHosts: ["[fe80::1.]:443"], blockedCIDRs: [])
+        let filter = DomainFilter(policy: policy)
+        #expect(filter.evaluate(host: "fe80::1", port: 443) != .allow)
+    }
+
+    // MARK: - B-3: extended default blockedCIDRs
+
+    @Test func defaultsAllowCGNATForTailscale() {
+        // CGNAT (100.64.0.0/10, RFC 6598) is deliberately not in
+        // defaultBlockedCIDRs — Tailscale's default tailnet lives there and
+        // many users expect agents to reach tailscale-exposed dev services.
+        // Operators who want it blocked can add it explicitly.
+        let filter = DomainFilter(policy: .allow)
+        #expect(filter.evaluate(host: "100.64.0.1", port: 443) == .allow)
+        #expect(filter.evaluate(host: "100.127.255.254", port: 443) == .allow)
+    }
+
+    @Test func defaultBlockedCIDRsCoverThisNetwork() {
+        let filter = DomainFilter(policy: .allow)
+        // 0.0.0.0/8 — "this network" / source-only, not a valid destination.
+        #expect(filter.evaluate(host: "0.0.0.1", port: 443) != .allow)
+    }
+
+    @Test func defaultBlockedCIDRsCoverMulticastAndBroadcast() {
+        let filter = DomainFilter(policy: .allow)
+        // 224.0.0.0/4 multicast, 240.0.0.0/4 reserved (incl. 255.255.255.255).
+        #expect(filter.evaluate(host: "224.0.0.1", port: 443) != .allow)
+        #expect(filter.evaluate(host: "239.255.255.255", port: 443) != .allow)
+        #expect(filter.evaluate(host: "240.0.0.1", port: 443) != .allow)
+        #expect(filter.evaluate(host: "255.255.255.255", port: 443) != .allow)
+    }
+
+    @Test func defaultBlockedCIDRsCoverIPv6Multicast() {
+        let filter = DomainFilter(policy: .allow)
+        // ff00::/8 — IPv6 multicast (RFC 4291).
+        #expect(filter.evaluate(host: "ff02::1", port: 443) != .allow)
+    }
+
+    // MARK: - B-5: IPv6 zone-IDs stripped at evaluate time
+
+    @Test func ipv6ZoneIDStrippedBeforeCIDRCheck() {
+        // fe80::1%eth0 with the zone ID intact would slip past the
+        // pre-connect CIDR check (inet_pton rejects zoned form, so the
+        // check returns false and proceeds to dial). The post-DNS layer
+        // catches it eventually, but the SYN reveals open/closed/RST.
+        let filter = DomainFilter(policy: .allow)
+        #expect(filter.evaluate(host: "fe80::1%eth0", port: 443) != .allow)
+    }
+
+    @Test func ipv6ZoneIDStrippedFromAllowlistMatch() {
+        // A zoned form in the allowlist also strips at parse time so it
+        // matches the canonical form (and vice versa).
+        let filter = DomainFilter(policy: .deny(allowedHosts: ["fe80::1%eth0"]))
+        #expect(filter.evaluate(host: "fe80::1", port: 443) == .allow)
     }
 }
 
